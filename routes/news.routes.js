@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
+const pool = require('../config/db');
+
+// Valid metrics for sorting
+const VALID_METRICS = ['views', 'likes', 'comments', 'shares', 'priority_score'];
 
 // Middleware to verify admin token
 const verifyAdmin = (req, res, next) => {
@@ -439,6 +443,230 @@ router.put('/:id', verifyAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('News update error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get top 10 news based on a single metric
+router.get('/top/single-metric', async (req, res) => {
+  try {
+    const { metric = 'views', category } = req.query;
+    
+    // Validate metric
+    if (!VALID_METRICS.includes(metric)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Invalid metric. Valid options are: ${VALID_METRICS.join(', ')}` 
+      });
+    }
+    
+    // Build query based on metric
+    let query = `
+      SELECT n.news_id, n.title, n.short_description, n.content_url, 
+        n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
+    `;
+    
+    // Add metric-specific count and join
+    if (metric === 'views') {
+      query += `
+        COUNT(v.view_id) as view_count
+        FROM news n
+        LEFT JOIN views v ON n.news_id = v.news_id
+      `;
+    } else if (metric === 'likes') {
+      query += `
+        COUNT(l.like_id) as like_count
+        FROM news n
+        LEFT JOIN news_likes l ON n.news_id = l.news_id
+      `;
+    } else if (metric === 'comments') {
+      query += `
+        COUNT(c.comment_id) as comment_count
+        FROM news n
+        LEFT JOIN comments c ON n.news_id = c.news_id
+      `;
+    } else if (metric === 'shares') {
+      query += `
+        COUNT(s.share_id) as share_count
+        FROM news n
+        LEFT JOIN shares s ON n.news_id = s.news_id
+      `;
+    } else if (metric === 'priority_score') {
+      query += `
+        n.priority_score
+        FROM news n
+      `;
+    }
+    
+    // Add WHERE clause for category filter
+    if (category) {
+      query += ` WHERE n.category = $1 AND n.is_active = true`;
+    } else {
+      query += ` WHERE n.is_active = true`;
+    }
+    
+    // Add GROUP BY for aggregated metrics
+    if (metric !== 'priority_score') {
+      query += ` GROUP BY n.news_id`;
+    }
+    
+    // Add ORDER BY based on metric
+    if (metric === 'views') {
+      query += ` ORDER BY view_count DESC`;
+    } else if (metric === 'likes') {
+      query += ` ORDER BY like_count DESC`;
+    } else if (metric === 'comments') {
+      query += ` ORDER BY comment_count DESC`;
+    } else if (metric === 'shares') {
+      query += ` ORDER BY share_count DESC`;
+    } else if (metric === 'priority_score') {
+      query += ` ORDER BY n.priority_score DESC`;
+    }
+    
+    // Limit to top 10
+    query += ` LIMIT 10`;
+    
+    // Execute query
+    const result = category 
+      ? await pool.query(query, [category])
+      : await pool.query(query);
+    
+    res.json({
+      success: true,
+      metric: metric,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching top news by single metric:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get top 10 news based on multiple metrics with priority
+router.get('/top/multi-metric', async (req, res) => {
+  try {
+    const { 
+      metrics = 'views,likes,comments', 
+      weights = '0.5,0.3,0.2',
+      category 
+    } = req.query;
+    
+    // Parse metrics and weights
+    const metricsList = metrics.split(',');
+    const weightsList = weights.split(',').map(w => parseFloat(w));
+    
+    // Validate metrics and weights
+    if (metricsList.length !== weightsList.length) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Number of metrics must match number of weights' 
+      });
+    }
+    
+    for (const metric of metricsList) {
+      if (!VALID_METRICS.includes(metric)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Invalid metric: ${metric}. Valid options are: ${VALID_METRICS.join(', ')}` 
+        });
+      }
+    }
+    
+    // Validate weights sum to 1.0 (approximately)
+    const weightSum = weightsList.reduce((sum, weight) => sum + weight, 0);
+    if (Math.abs(weightSum - 1.0) > 0.01) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Weights must sum to 1.0' 
+      });
+    }
+    
+    // Build complex query with weighted score
+    let query = `
+      SELECT n.news_id, n.title, n.short_description, n.content_url, 
+        n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
+    `;
+    
+    // Add subqueries for each metric
+    let scoreComponents = [];
+    let joins = [];
+    
+    metricsList.forEach((metric, index) => {
+      const weight = weightsList[index];
+      
+      if (metric === 'views') {
+        scoreComponents.push(`(COALESCE(view_count, 0) * ${weight})`);
+        joins.push(`
+          LEFT JOIN (
+            SELECT news_id, COUNT(*) as view_count
+            FROM views
+            GROUP BY news_id
+          ) v ON n.news_id = v.news_id
+        `);
+      } else if (metric === 'likes') {
+        scoreComponents.push(`(COALESCE(like_count, 0) * ${weight})`);
+        joins.push(`
+          LEFT JOIN (
+            SELECT news_id, COUNT(*) as like_count
+            FROM news_likes
+            GROUP BY news_id
+          ) l ON n.news_id = l.news_id
+        `);
+      } else if (metric === 'comments') {
+        scoreComponents.push(`(COALESCE(comment_count, 0) * ${weight})`);
+        joins.push(`
+          LEFT JOIN (
+            SELECT news_id, COUNT(*) as comment_count
+            FROM comments
+            GROUP BY news_id
+          ) c ON n.news_id = c.news_id
+        `);
+      } else if (metric === 'shares') {
+        scoreComponents.push(`(COALESCE(share_count, 0) * ${weight})`);
+        joins.push(`
+          LEFT JOIN (
+            SELECT news_id, COUNT(*) as share_count
+            FROM shares
+            GROUP BY news_id
+          ) s ON n.news_id = s.news_id
+        `);
+      } else if (metric === 'priority_score') {
+        scoreComponents.push(`(COALESCE(n.priority_score, 0) * ${weight})`);
+      }
+    });
+    
+    // Add weighted score calculation
+    query += `(${scoreComponents.join(' + ')}) as weighted_score
+      FROM news n
+      ${joins.join('\n')}
+    `;
+    
+    // Add WHERE clause for category filter
+    if (category) {
+      query += ` WHERE n.category = $1 AND n.is_active = true`;
+    } else {
+      query += ` WHERE n.is_active = true`;
+    }
+    
+    // Add ORDER BY for weighted score
+    query += ` ORDER BY weighted_score DESC`;
+    
+    // Limit to top 10
+    query += ` LIMIT 10`;
+    
+    // Execute query
+    const result = category 
+      ? await pool.query(query, [category])
+      : await pool.query(query);
+    
+    res.json({
+      success: true,
+      metrics: metricsList,
+      weights: weightsList,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching top news by multiple metrics:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });

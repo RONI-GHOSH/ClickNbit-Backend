@@ -12,6 +12,8 @@ const adminRoutes = require('./routes/admin.routes');
 const newsRoutes = require('./routes/news.routes');
 const uploadRoutes = require('./routes/upload.routes');
 const newsTypesRoutes = require('./routes/news-types.routes');
+const adFormatsRoutes = require('./routes/ad-formats.routes');
+const advertisementsRoutes = require('./routes/advertisements.routes');
 
 // Initialize express app
 const app = express();
@@ -29,6 +31,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/news', newsRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/news-types', newsTypesRoutes);
+app.use('/api/ad-formats', adFormatsRoutes);
+app.use('/api/advertisements', advertisementsRoutes);
 
 // Root route
 app.get('/', (req, res) => {
