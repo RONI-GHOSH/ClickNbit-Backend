@@ -1,0 +1,51 @@
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const dotenv = require('dotenv');
+
+// Load environment variables
+dotenv.config();
+
+// Import routes
+const adminRoutes = require('./routes/admin.routes');
+const newsRoutes = require('./routes/news.routes');
+const uploadRoutes = require('./routes/upload.routes');
+const newsTypesRoutes = require('./routes/news-types.routes');
+
+// Initialize express app
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(helmet()); // Security headers
+app.use(cors()); // Enable CORS
+app.use(morgan('dev')); // Logging
+app.use(express.json()); // Parse JSON bodies
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+
+// Routes
+app.use('/api/admin', adminRoutes);
+app.use('/api/news', newsRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/news-types', newsTypesRoutes);
+
+// Root route
+app.get('/', (req, res) => {
+  res.json({ message: 'Welcome to ClickNbit News API' });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    success: false,
+    message: 'Internal Server Error',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
