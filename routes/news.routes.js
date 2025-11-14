@@ -236,7 +236,7 @@ router.get('/banner', async (req, res) => {
 });
 
 router.get("/feed", async (req, res) => {
-  try {
+  try{
     const {
       type = 0,
       sort = "default",
@@ -244,6 +244,7 @@ router.get("/feed", async (req, res) => {
       timeLimit,
       lat,
       lng,
+      category,
     } = req.query;
 
     const parsedLimit = parseInt(limit) || 10;
@@ -300,6 +301,11 @@ router.get("/feed", async (req, res) => {
     if (timeLimit) {
       query += ` AND n.created_at >= $${paramIndex++}`;
       params.push(new Date(timeLimit));
+    }
+
+    if (category) {
+      query += ` AND n.category = $${paramIndex++}`;
+      params.push(category);
     }
 
     if (sort === "time") {
