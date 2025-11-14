@@ -3,80 +3,93 @@ const path = require('path');
 const cloudinary = require('../config/cloudinary');
 const { Readable } = require('stream');
 
-// Configure multer storage
+// ===============================
+// MULTER CONFIGURATION
+// ===============================
 const storage = multer.memoryStorage();
 
-// File filter function
+// File type filter
 const fileFilter = (req, file, cb) => {
-  // Accept images, videos and text files
-  if (
-    file.mimetype.startsWith('image/') ||
-    file.mimetype.startsWith('video/') ||
-    file.mimetype === 'text/plain' ||
-    file.mimetype === 'application/pdf'
-  ) {
+  const allowedTypes = [
+    'image/',
+    'video/',
+    'text/plain',
+    'application/pdf',
+  ];
+  if (allowedTypes.some(type => file.mimetype.startsWith(type))) {
     cb(null, true);
   } else {
     cb(new Error('Unsupported file type'), false);
   }
 };
 
-// Initialize multer upload
+// Dynamic file size limit (videos can be larger)
 const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 10 * 1024 * 1024, // up to 10MB for videos
   },
 });
 
-// Cloudinary upload function for different media types
+// ===============================
+// CLOUDINARY UPLOAD HELPER
+// ===============================
 const uploadToCloudinary = async (req, res, next) => {
-  if (!req.file) {
-    return next();
-  }
+  if (!req.file) return next();
 
   try {
-    let uploadResult;
     const fileBuffer = req.file.buffer;
-    
-    // Create a readable stream from buffer
-    const stream = Readable.from(fileBuffer);
-    
-    // Determine resource type based on mimetype
+    const mimetype = req.file.mimetype;
+
+    // Detect file type
     let resourceType = 'auto';
-    if (req.file.mimetype.startsWith('image/')) {
-      resourceType = 'image';
-    } else if (req.file.mimetype.startsWith('video/')) {
-      resourceType = 'video';
-    } else if (req.file.mimetype === 'text/plain' || req.file.mimetype === 'application/pdf') {
-      resourceType = 'raw';
+    if (mimetype.startsWith('image/')) resourceType = 'image';
+    if (mimetype.startsWith('video/')) resourceType = 'video';
+    if (mimetype === 'text/plain' || mimetype === 'application/pdf') resourceType = 'raw';
+
+    // Use Cloudinary upload options
+    const uploadOptions = {
+      resource_type: resourceType,
+      folder: 'clicknbit',
+      use_filename: true,
+      unique_filename: false,
+      overwrite: false,
+    };
+
+    // Video-specific encoding options
+    if (resourceType === 'video') {
+      uploadOptions.eager = [
+        { format: 'mp4', transformation: [{ width: 1280, height: 720, crop: 'limit' }] },
+        { format: 'webm', transformation: [{ width: 1280, height: 720, crop: 'limit' }] },
+      ];
+      uploadOptions.eager_async = true; // process encoding in background
     }
-    
-    // Create upload stream to Cloudinary
-    const uploadPromise = new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          resource_type: resourceType,
-          folder: 'clicknbit',
-        },
-        (error, result) => {
-          if (error) return reject(error);
-          resolve(result);
-        }
-      );
-      
-      stream.pipe(uploadStream);
+
+    // Handle large video uploads with `upload_large_stream`
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadFn =
+        resourceType === 'video'
+          ? cloudinary.uploader.upload_large_stream
+          : cloudinary.uploader.upload_stream;
+
+      const uploadStream = uploadFn(uploadOptions, (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      });
+
+      Readable.from(fileBuffer).pipe(uploadStream);
     });
-    
-    uploadResult = await uploadPromise;
-    
-    // Add Cloudinary result to request object
+
     req.cloudinaryResult = uploadResult;
     next();
   } catch (error) {
-    console.error('Cloudinary upload error:', error);
-    res.status(500).json({ success: false, message: 'Error uploading file to Cloudinary' });
+    console.error('❌ Cloudinary upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error uploading file to Cloudinary',
+      error: error.message,
+    });
   }
 };
 
