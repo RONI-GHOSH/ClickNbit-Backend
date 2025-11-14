@@ -9,6 +9,7 @@ dotenv.config();
 
 // Import routes
 const adminRoutes = require('./routes/admin.routes');
+const userRoutes = require('./routes/user.routes');
 const newsRoutes = require('./routes/news.routes');
 const uploadRoutes = require('./routes/upload.routes');
 const newsTypesRoutes = require('./routes/news-types.routes');
@@ -28,6 +29,7 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
 // Routes
 app.use('/api/admin', adminRoutes);
+app.use('/api/user', userRoutes);
 app.use('/api/news', newsRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/news-types', newsTypesRoutes);
