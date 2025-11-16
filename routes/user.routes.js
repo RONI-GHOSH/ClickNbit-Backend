@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
@@ -20,82 +19,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
-    }
-    
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    const user = result.rows[0];
-    
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
-    }
-    
-    const validPassword = await bcrypt.compare(password, user.password_hash);
-    if (!validPassword) {
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
-    }
-    
-    const token = jwt.sign(
-      { id: user.user_id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-    
-    res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      data: {
-        user_id: user.user_id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        token
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-router.post('/register', async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Name, email and password are required' });
-    }
-    
-    const emailCheck = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (emailCheck.rows.length > 0) {
-      return res.status(409).json({ success: false, message: 'Email already in use' });
-    }
-    
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-    
-    const result = await db.query(
-      'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING user_id, name, email',
-      [name, email, hashedPassword]
-    );
-    
-    res.status(201).json({
-      success: true,
-      message: 'User registered successfully',
-      data: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-router.get("/profile", verifyToken, async (req, res) => {
+router.get("/", verifyToken, async (req, res) => {
     try {
         const user= req.user;
 
@@ -110,32 +34,133 @@ router.get("/profile", verifyToken, async (req, res) => {
     }
 })
 
-router.put('/up', verifyToken, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const { location, interests } = req.body;
+router.post('/', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
 
-        const updateQuery = `
-            UPDATE users
-            SET 
-                location = $1, 
-                interests = $2,
-                updated_at = NOW()
-            WHERE user_id = $3
-            RETURNING *;
-        `;
+    const existingProfile = await db.query(
+      "SELECT * FROM users WHERE user_id = $1",
+      [userId]
+    );
 
-        const result = await db.query(updateQuery, [location, interests, userId]);
-
-        if (result.rows.length === 0) {
-            return res.status(404).send({ error: 'User not found' });
-        }
-
-        res.status(200).send(result.rows[0]);
-    } catch (e) {
-        console.error(e);
-        res.status(500).send({ error: e.message });
+    if (existingProfile.rows.length === 0) {
+      return res.status(400).json({ error: "Profile does not exist for this user" });
     }
+
+    const { name, phone, email, profile_photo_url, city, district, state, country, age, location, interests } = req.body;
+
+    const result = await db.query(
+      `UPDATE users SET
+        name = $2,
+        phone = COALESCE(phone, $3),
+        email = COALESCE(email, $4),
+        profile_image_url = $5,
+        city = $6,
+        district = $7,
+        state = $8,
+        country = $9,
+        age = $10,
+        location = $11,
+        interests = $12
+      WHERE user_id = $1
+      RETURNING *`,
+      [
+        userId,
+        name,
+        phone,
+        email,
+        profile_photo_url,
+        city,
+        district,
+        state,
+        country,
+        age,
+        location,
+        interests
+      ]
+    );
+
+    return res.status(200).json({
+      message: "Profile updated successfully",
+      res: result.rows[0]
+    });
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
 });
+
+router.patch("/", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const existingProfile = await db.query(
+      "SELECT * FROM users WHERE user_id = $1",
+      [userId]
+    );
+
+    if (existingProfile.rows.length === 0) {
+      return res.status(400).json({ error: "Profile does not exist for this user" });
+    }
+
+
+    const {
+      name,
+      phone,
+      email,
+      profile_image_url,
+      city,
+      district,
+      state,
+      country,
+      age,
+      location,
+      interests
+    } = req.body;
+
+    const result = await db.query(
+      `UPDATE users SET
+        name = COALESCE($2, name),
+        phone = COALESCE($3, phone),
+        email = COALESCE($4, email),
+        profile_image_url = COALESCE($5, profile_image_url),
+        city = COALESCE($6, city),
+        district = COALESCE($7, district),
+        state = COALESCE($8, state),
+        country = COALESCE($9, country),
+        age = COALESCE($10, age),
+        location = COALESCE($11, location),
+        interests = COALESCE($12, interests),
+        updated_at = NOW()
+      WHERE user_id = $1
+      RETURNING *`,
+      [
+        userId,
+        name,
+        phone,
+        email,
+        profile_image_url,
+        city,
+        district,
+        state,
+        country,
+        age,
+        location,
+        interests
+      ]
+    );
+
+    return res.status(200).json({
+      message: "Profile updated successfully",
+      res: result.rows[0]
+    });
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 module.exports = router;

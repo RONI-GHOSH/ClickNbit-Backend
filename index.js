@@ -12,6 +12,7 @@ const adminRoutes = require('./routes/admin.routes');
 const loginRoutes = require('./routes/login.routes');
 const userRoutes = require('./routes/user.routes');
 const newsRoutes = require('./routes/news.routes');
+const prefRoutes = require('./routes/preferences.routes');
 const uploadRoutes = require('./routes/upload.routes');
 const newsTypesRoutes = require('./routes/news-types.routes');
 const adFormatsRoutes = require('./routes/ad-formats.routes');
@@ -31,8 +32,9 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 // Routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/login', loginRoutes);
-app.use('/api/user', userRoutes);
+app.use('/api/profile', userRoutes);
 app.use('/api/news', newsRoutes);
+app.use('/api/preferences', prefRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/news-types', newsTypesRoutes);
 app.use('/api/ad-formats', adFormatsRoutes);
