@@ -32,6 +32,24 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
+const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+
+  if (!token) {
+    return res
+      .status(401)
+      .json({ success: false, message: "Access denied. No token provided." });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ success: false, message: "Invalid token." });
+  }
+};
+
 // Add new news item (admin only)
 router.post("/", verifyAdmin, async (req, res) => {
   try {
@@ -111,10 +129,10 @@ router.post("/", verifyAdmin, async (req, res) => {
   }
 });
 
-router.get('/top10', async (req, res) => {
+router.get("/top10", async (req, res) => {
   try {
-    const { category = 'all' } = req.query;
-    const categories = category.split(',').map(c => c.trim().toLowerCase());
+    const { category = "all" } = req.query;
+    const categories = category.split(",").map((c) => c.trim().toLowerCase());
     const fixedLimit = 10;
 
     const params = [];
@@ -144,7 +162,7 @@ router.get('/top10', async (req, res) => {
       WHERE n.is_active = true
     `;
 
-    if (!categories.includes('all')) {
+    if (!categories.includes("all")) {
       query += ` AND LOWER(n.category) = ANY($${paramIndex++})`;
       params.push(categories);
     }
@@ -166,17 +184,15 @@ router.get('/top10', async (req, res) => {
       success: true,
       limit: fixedLimit,
       categories,
-      data: result.rows
+      data: result.rows,
     });
-
   } catch (error) {
-    console.error('Top10 fetch error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error("Top10 fetch error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-
-router.get('/banner', async (req, res) => {
+router.get("/banner", async (req, res) => {
   try {
     const { limit = 5, adCount = 1 } = req.query;
     const parsedLimit = parseInt(limit) || 5;
@@ -218,7 +234,7 @@ router.get('/banner', async (req, res) => {
     const banners = [...newsResult.rows];
 
     if (adResult.rows.length > 0) {
-      const ads = adResult.rows.map(ad => ({ type: 'advertisement', ...ad }));
+      const ads = adResult.rows.map((ad) => ({ type: "advertisement", ...ad }));
       banners.push(...ads);
     }
 
@@ -226,61 +242,58 @@ router.get('/banner', async (req, res) => {
       success: true,
       news_limit: parsedLimit,
       ad_count: parsedAdCount,
-      data: banners
+      data: banners,
     });
-
   } catch (error) {
-    console.error('Banner fetch error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error("Banner fetch error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-router.get("/feed", async (req, res) => {
-  try{
+router.get("/feed", verifyToken, async (req, res) => {
+  try {
     const {
-      type = 0,
+      type = "all",
       sort = "default",
       limit = 10,
-      timeLimit,
+      ads = 1,
       lat,
       lng,
       category,
+      afterTime,
+      currentPage = 1
     } = req.query;
 
     const parsedLimit = parseInt(limit) || 10;
-    const validSorts = [
-      "time",
-      "views",
-      "likes",
-      "comments",
-      "shares",
-      "default",
-    ];
+    const parsedAds = parseInt(ads) || 1;
+    const page = parseInt(currentPage) || 1;
 
-    if (!validSorts.includes(sort)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid sort option. Valid options: ${validSorts.join(", ")}`,
-      });
+    const newsOffset = (page - 1) * parsedLimit;
+    const adsOffset = (page - 1) * parsedAds;
+
+    let prefJson = null;
+
+    if (req.user) {
+      const prefRes = await db.query(
+        `SELECT 
+           clicked_news_category,
+           skipped_news_category,
+           preferred_news_type,
+           user_locations
+         FROM preferences 
+         WHERE user_id = $1 LIMIT 1`,
+        [req.user.id]
+      );
+
+      if (prefRes.rows.length) prefJson = prefRes.rows[0];
     }
 
     const params = [];
-    let paramIndex = 1;
+    let idx = 1;
 
-    let query = `
+    let newsQuery = `
       SELECT 
-        n.news_id,
-        n.title,
-        n.short_description,
-        n.type_id,
-        n.content_url,
-        n.category,
-        n.tags,
-        n.is_featured,
-        n.is_breaking,
-        n.priority_score,
-        n.geo_point,
-        n.created_at,
+        n.*,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -293,108 +306,149 @@ router.get("/feed", async (req, res) => {
       WHERE n.is_active = true
     `;
 
-    if (type !== 0) {
-      query += ` AND n.type_id = $${paramIndex++}`;
+    if (type !== "all") {
+      newsQuery += ` AND n.type_id = $${idx}`;
       params.push(type);
-    }
-
-    if (timeLimit) {
-      query += ` AND n.created_at >= $${paramIndex++}`;
-      params.push(new Date(timeLimit));
+      idx++;
     }
 
     if (category) {
-      query += ` AND n.category = $${paramIndex++}`;
+      newsQuery += ` AND n.category = $${idx}`;
       params.push(category);
+      idx++;
     }
 
-    if (sort === "time") {
-      query += ` ORDER BY n.created_at DESC`;
-    } else if (sort === "default") {
-      if (lat && lng) {
-        query += `
+    if (afterTime) {
+      newsQuery += ` AND n.created_at > $${idx}`;
+      params.push(new Date(afterTime));
+      idx++;
+    }
+
+    if (sort === "default") {
+      if (prefJson) {
+        newsQuery += `
           ORDER BY (
-            (COALESCE(v.view_count, 0) * 0.3) +
-            (COALESCE(l.like_count, 0) * 0.2) +
-            (COALESCE(c.comment_count, 0) * 0.1) +
-            (COALESCE(s.share_count, 0) * 0.1) +
-            (COALESCE(n.priority_score, 0) * 0.3) +
             (CASE 
-              WHEN n.geo_point IS NOT NULL 
-              THEN 1 / (1 + (ST_DistanceSphere(n.geo_point, ST_MakePoint(${lng}, ${lat})) / 1000))
+              WHEN n.category IS NOT NULL 
+              THEN COALESCE((($${idx}::jsonb->'clicked_news_category'->>n.category)::int), 0) * 7
               ELSE 0
-             END * 0.2)
+            END) +
+
+            (CASE 
+              WHEN n.category IS NOT NULL 
+              THEN COALESCE((($${idx}::jsonb->'skipped_news_category'->>n.category)::int), 0) * 5
+              ELSE 0
+            END) +
+
+            (CASE 
+              WHEN ($${idx}::jsonb->>'preferred_news_type') = n.area_type
+              THEN 2
+              ELSE 0
+            END) +
+
+            (CASE 
+              WHEN n.geo_point IS NOT NULL
+              THEN COALESCE((($${idx}::jsonb->'user_locations'->>ST_AsText(n.geo_point))::int), 0) * 10
+              ELSE 0
+            END) +
+
+            (CASE
+              WHEN n.geo_point IS NOT NULL AND $${idx+1}::float IS NOT NULL AND $${idx+2}::float IS NOT NULL
+              THEN 
+                1 / (
+                  1 + (
+                    ST_DistanceSphere(
+                      n.geo_point::geometry,
+                      ST_SetSRID(ST_MakePoint($${idx+2}, $${idx+1}), 4326)
+                    ) / 10000
+                  )
+                )
+              ELSE 0
+            END * 50) +
+
+            ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.05)
           ) DESC
         `;
+
+        params.push(prefJson);
+        params.push(lat || null);
+        params.push(lng || null);
+        idx += 3;
+
       } else {
-        query += `
-          ORDER BY (
-            (COALESCE(v.view_count, 0) * 0.3) +
-            (COALESCE(l.like_count, 0) * 0.2) +
-            (COALESCE(c.comment_count, 0) * 0.1) +
-            (COALESCE(s.share_count, 0) * 0.1) +
-            (COALESCE(n.priority_score, 0) * 0.3)
-          ) DESC
-        `;
+        newsQuery += ` ORDER BY n.created_at DESC`;
       }
-    } else if (["views", "likes", "comments", "shares"].includes(sort)) {
-      query += ` ORDER BY COALESCE(${
-        sort === "views"
-          ? "v.view_count"
-          : sort === "likes"
-          ? "l.like_count"
-          : sort === "comments"
-          ? "c.comment_count"
-          : "s.share_count"
-      }, 0) DESC`;
+    } else {
+      const sortMap = {
+        time: "n.created_at",
+        views: "views",
+        likes: "news_likes",
+        comments: "comments",
+        shares: "shares"
+      };
+      newsQuery += ` ORDER BY ${sortMap[sort]} DESC`;
     }
 
-    query += ` LIMIT $${paramIndex++}`;
-    params.push(parsedLimit);
+    newsQuery += ` LIMIT $${idx} OFFSET $${idx + 1}`;
+    params.push(parsedLimit, newsOffset);
+    idx += 2;
 
-    const newsResult = await pool.query(query, params);
-    let newsFeed = newsResult.rows;
+    const newsRes = await db.query(newsQuery, params);
+    const news = newsRes.rows;
 
     let adQuery = `
-      SELECT ad_id, title, media_url, redirect_url, priority_score
+      SELECT ad_id, title, media_url, redirect_url, priority_score, geo_point
       FROM advertisements
       WHERE is_active = true
     `;
 
     if (lat && lng) {
       adQuery += `
-        ORDER BY 
-          (COALESCE(priority_score, 0) * 0.7) +
-          (CASE 
-            WHEN geo_point IS NOT NULL 
-           THEN 1 / (1 + (ST_DistanceSphere(geo_point, ST_MakePoint(${lng}, ${lat})) / 1000))
-           ELSE 0
-          END * 0.3) DESC
-       LIMIT 1
+        ORDER BY
+          (priority_score * 0.6) +
+          (
+            CASE 
+              WHEN geo_point IS NOT NULL THEN
+                1 / (
+                  1 + (
+                    ST_DistanceSphere(
+                      geo_point::geometry,
+                      ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)
+                    ) / 8000
+                  )
+                )
+              ELSE 0
+            END * 0.4
+          )
+        DESC
       `;
     } else {
-      adQuery += ` ORDER BY priority_score DESC LIMIT 1`;
+      adQuery += ` ORDER BY priority_score DESC`;
     }
-    const adResult = await pool.query(adQuery);
-    const adItem = adResult.rows[0];
 
-    if (adItem && newsFeed.length > 1) {
-      newsFeed.push({ type: "advertisement", ...adItem });
-    }
+    adQuery += ` LIMIT ${parsedAds} OFFSET ${adsOffset}`;
+
+    const adsRes = await db.query(adQuery);
+    const adsList = adsRes.rows;
 
     res.status(200).json({
       success: true,
-      sort_type: sort,
-      feed_type: type,
+      page,
       limit: parsedLimit,
-      has_ad: !!adItem,
-      data: newsFeed,
+      ads_limit: parsedAds,
+      news_count: news.length,
+      ads_count: adsList.length,
+      news,
+      ads: adsList,
+      data: [...news, ...adsList]
     });
-  } catch (error) {
-    console.error("Feed fetch error:", error);
+
+  } catch (err) {
+    console.error("Feed API error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 // Get news list with metrics
 router.get("/", async (req, res) => {
