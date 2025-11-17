@@ -238,7 +238,7 @@ router.post('/', verifyAdmin, async (req, res) => {
     // Insert new advertisement
     const query = `
       INSERT INTO advertisements (
-        admin_id, format_id, title, description, media_url, redirect_url,
+        admin_id, format_id, title, description, content_url, redirect_url,
         target_tags, target_categories, area_names, geo_point, radius_km,
         is_strict_location, view_target, click_target, like_target, share_target,
         is_active, is_featured, priority_score, relevance_expires_at, start_at, end_at
@@ -342,7 +342,7 @@ router.put('/:id', verifyAdmin, async (req, res) => {
     }
     
     if (media_url !== undefined) {
-      updateFields.push(`media_url = $${paramCounter++}`);
+      updateFields.push(`content_url = $${paramCounter++}`);
       queryParams.push(media_url);
     }
     

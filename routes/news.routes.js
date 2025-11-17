@@ -253,12 +253,7 @@ router.get("/banner", async (req, res) => {
     const newsResult = await pool.query(newsQuery, newsParams);
 
     const adQuery = `
-      SELECT 
-        ad_id, 
-        title, 
-        media_url, 
-        redirect_url, 
-        priority_score
+      SELECT *
       FROM advertisements
       WHERE is_active = true
       ORDER BY priority_score DESC
@@ -438,7 +433,7 @@ router.get("/feed", verifyToken, async (req, res) => {
     const news = newsRes.rows;
 
     let adQuery = `
-      SELECT ad_id, title, media_url, redirect_url, priority_score, geo_point
+      SELECT *
       FROM advertisements
       WHERE is_active = true
     `;
