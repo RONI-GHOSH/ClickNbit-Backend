@@ -131,8 +131,10 @@ router.post("/", verifyAdmin, async (req, res) => {
 
 router.get("/top10", async (req, res) => {
   try {
-    const { category = "all" } = req.query;
+    const { category = "all", ads = 0, afterTime } = req.query;
+
     const categories = category.split(",").map((c) => c.trim().toLowerCase());
+    const adLimit = parseInt(ads) || 0;
     const fixedLimit = 10;
 
     const params = [];
@@ -167,6 +169,11 @@ router.get("/top10", async (req, res) => {
       params.push(categories);
     }
 
+    if (afterTime) {
+      query += ` AND n.created_at > $${paramIndex++}`;
+      params.push(afterTime);
+    }
+
     query += `
       ORDER BY (
         (COALESCE(v.view_count, 0) * 0.4) +
@@ -178,44 +185,81 @@ router.get("/top10", async (req, res) => {
       LIMIT ${fixedLimit}
     `;
 
-    const result = await pool.query(query, params);
+    const newsResult = await pool.query(query, params);
+
+    let adsResult = [];
+    if (adLimit > 0) {
+      const adsQuery = `
+        SELECT *
+        FROM advertisements
+        WHERE is_active = true
+        ORDER BY created_at DESC
+        LIMIT $1
+      `;
+
+      adsResult = (await pool.query(adsQuery, [adLimit])).rows;
+    }
+
+    const finalData = [...newsResult.rows, ...adsResult];
 
     res.status(200).json({
       success: true,
       limit: fixedLimit,
+      adsInserted: adsResult.length,
+      afterTime: afterTime || null,
       categories,
-      data: result.rows,
+      totalReturned: finalData.length,
+      data: finalData,
     });
+
   } catch (error) {
     console.error("Top10 fetch error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
+
 router.get("/banner", async (req, res) => {
   try {
-    const { limit = 5, adCount = 1 } = req.query;
-    const parsedLimit = parseInt(limit) || 5;
-    const parsedAdCount = parseInt(adCount) || 1;
+    const {
+      category = "all",
+      count = 5,
+      ads = 2,
+      afterTime,
+    } = req.query;
 
-    const newsQuery = `
-      SELECT 
-        n.news_id,
-        n.title,
-        n.short_description,
-        n.content_url,
-        n.category,
-        n.tags,
-        n.is_featured,
-        n.is_breaking,
-        n.priority_score,
-        n.created_at
+    const parsedCount = parseInt(count) || 5;
+    const parsedAds = parseInt(ads) || 2;
+
+    const newsParams = [];
+    let paramIndex = 1;
+
+    let newsQuery = `
+      SELECT *
       FROM news n
-      WHERE n.is_active = true AND (n.is_featured = true OR n.is_breaking = true)
-      ORDER BY n.priority_score DESC, n.created_at DESC
-      LIMIT $1
+      WHERE n.is_active = true 
+      AND (n.is_featured = true OR n.is_breaking = true)
     `;
-    const newsResult = await pool.query(newsQuery, [parsedLimit]);
+
+    if (category !== "all") {
+      newsQuery += ` AND n.category = $${paramIndex}`;
+      newsParams.push(category);
+      paramIndex++;
+    }
+
+    if (afterTime) {
+      newsQuery += ` AND n.created_at > $${paramIndex}`;
+      newsParams.push(afterTime);
+      paramIndex++;
+    }
+
+    newsQuery += `
+      ORDER BY n.priority_score DESC, n.created_at DESC
+      LIMIT $${paramIndex}
+    `;
+    newsParams.push(parsedCount);
+
+    const newsResult = await pool.query(newsQuery, newsParams);
 
     const adQuery = `
       SELECT 
@@ -229,19 +273,24 @@ router.get("/banner", async (req, res) => {
       ORDER BY priority_score DESC
       LIMIT $1
     `;
-    const adResult = await pool.query(adQuery, [parsedAdCount]);
+    const adResult = await pool.query(adQuery, [parsedAds]);    
 
     const banners = [...newsResult.rows];
 
     if (adResult.rows.length > 0) {
-      const ads = adResult.rows.map((ad) => ({ type: "advertisement", ...ad }));
-      banners.push(...ads);
+      const adsMapped = adResult.rows.map((ad) => ({
+        type: "advertisement",
+        ...ad,
+      }));
+      banners.push(...adsMapped);
     }
 
     res.status(200).json({
       success: true,
-      news_limit: parsedLimit,
-      ad_count: parsedAdCount,
+      category,
+      news_count: parsedCount,
+      ads_count: parsedAds,
+      afterTime: afterTime || null,
       data: banners,
     });
   } catch (error) {
@@ -249,6 +298,7 @@ router.get("/banner", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 router.get("/feed", verifyToken, async (req, res) => {
   try {

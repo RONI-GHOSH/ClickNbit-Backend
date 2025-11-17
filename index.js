@@ -15,6 +15,7 @@ const newsRoutes = require('./routes/news.routes');
 const prefRoutes = require('./routes/preferences.routes');
 const uploadRoutes = require('./routes/upload.routes');
 const newsTypesRoutes = require('./routes/news-types.routes');
+const catRoutes = require('./routes/cat.routes');
 const adFormatsRoutes = require('./routes/ad-formats.routes');
 const advertisementsRoutes = require('./routes/advertisements.routes');
 
@@ -37,6 +38,7 @@ app.use('/api/news', newsRoutes);
 app.use('/api/preferences', prefRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/news-types', newsTypesRoutes);
+app.use('/api/categories', catRoutes);
 app.use('/api/ad-formats', adFormatsRoutes);
 app.use('/api/advertisements', advertisementsRoutes);
 
