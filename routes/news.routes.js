@@ -142,16 +142,7 @@ router.get("/top10", async (req, res) => {
 
     let query = `
       SELECT 
-        n.news_id,
-        n.title,
-        n.short_description,
-        n.content_url,
-        n.category,
-        n.tags,
-        n.is_featured,
-        n.is_breaking,
-        n.priority_score,
-        n.created_at,
+        *,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
