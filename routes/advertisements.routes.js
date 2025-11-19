@@ -207,7 +207,7 @@ router.post('/', verifyAdmin, async (req, res) => {
       format_id,
       title,
       description,
-      media_url,
+      content_url,
       redirect_url,
       target_tags,
       target_categories,
@@ -228,7 +228,7 @@ router.post('/', verifyAdmin, async (req, res) => {
     } = req.body;
     
     // Validate required fields
-    if (!format_id || !title || !media_url) {
+    if (!format_id || !title || !content_url) {
       return res.status(400).json({ 
         success: false, 
         message: 'Format ID, title, and media URL are required' 
@@ -254,7 +254,7 @@ router.post('/', verifyAdmin, async (req, res) => {
       format_id,
       title,
       description,
-      media_url,
+      content_url,
       redirect_url,
       target_tags || [],
       target_categories || [],
@@ -295,7 +295,7 @@ router.put('/:id', verifyAdmin, async (req, res) => {
       format_id,
       title,
       description,
-      media_url,
+      content_url,
       redirect_url,
       target_tags,
       target_categories,
@@ -341,9 +341,9 @@ router.put('/:id', verifyAdmin, async (req, res) => {
       queryParams.push(description);
     }
     
-    if (media_url !== undefined) {
+    if (content_url !== undefined) {
       updateFields.push(`content_url = $${paramCounter++}`);
-      queryParams.push(media_url);
+      queryParams.push(content_url);
     }
     
     if (redirect_url !== undefined) {
