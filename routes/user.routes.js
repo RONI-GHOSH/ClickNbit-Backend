@@ -162,5 +162,66 @@ router.patch("/", verifyToken, async (req, res) => {
   }
 });
 
+router.get("/completeness", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const userResult = await db.query(
+      `SELECT phone, email FROM users WHERE user_id = $1`,
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User profile not found",
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    const isPhonePresent = !!user.phone;
+    const isEmailPresent = !!user.email;
+    const isRegistered = isPhonePresent || isEmailPresent;
+
+    const prefResult = await db.query(
+      `SELECT preferred_news_type, selected_categories, user_locations,
+              user_locations_tags, last_known_location
+       FROM preferences WHERE user_id = $1`,
+      [userId]
+    );
+
+    let prefs = prefResult.rows[0] || {};
+
+    const preferenceCompleteness = {
+      preferred_news_type: !!prefs.preferred_news_type,
+      selected_categories: Array.isArray(prefs.selected_categories) && prefs.selected_categories.length > 0,
+      user_locations: prefs.user_locations && Object.keys(prefs.user_locations).length > 0,
+      user_locations_tags: !!prefs.user_locations_tags,
+      last_known_location: !!prefs.last_known_location,
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        registration: {
+          phone_present: isPhonePresent,
+          email_present: isEmailPresent,
+          is_registered: isRegistered,
+        },
+        preferences: preferenceCompleteness,
+      },
+    });
+  } catch (err) {
+    console.error("Error fetching completeness:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
+  }
+});
+
+
 
 module.exports = router;

@@ -129,6 +129,64 @@ router.post("/", verifyAdmin, async (req, res) => {
   }
 });
 
+router.get("/details", async (req, res) => {
+  try {
+    const { news_id } = req.query;
+
+    if (!news_id) {
+      return res.status(400).json({
+        success: false,
+        message: "news_id is required",
+      });
+    }
+
+    const query = `
+      SELECT 
+        n.news_id AS id,
+        n.title,
+        n.short_description AS description,
+        n.content_url,
+        n.redirect_url,
+        COALESCE(v.view_count, 0) AS view_count,
+        COALESCE(l.like_count, 0) AS like_count,
+        COALESCE(c.comment_count, 0) AS comment_count,
+        COALESCE(s.share_count, 0) AS share_count,
+        n.created_at,
+        n.category,
+        n.area_type,
+        n.priority_score
+      FROM news n
+      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+      WHERE n.news_id = $1 AND n.is_active = true
+      LIMIT 1
+    `;
+
+    const result = await db.query(query, [news_id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "News not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: result.rows[0],
+    });
+
+  } catch (err) {
+    console.error("Details API error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
 router.get("/top10", async (req, res) => {
   try {
     const { category = "all", ads = 0, afterTime } = req.query;
@@ -142,7 +200,12 @@ router.get("/top10", async (req, res) => {
 
     let query = `
       SELECT 
-        *,
+        n.news_id as id, 
+        n.title, 
+        n.short_description as description, 
+        n.content_url,
+        n.redirect_url,
+        n.is_ad,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -181,12 +244,27 @@ router.get("/top10", async (req, res) => {
     let adsResult = [];
     if (adLimit > 0) {
       const adsQuery = `
-        SELECT *
-        FROM advertisements
-        WHERE is_active = true
-        ORDER BY created_at DESC
+        SELECT 
+          a.ad_id AS id,
+          a.title,
+          a.description,
+          a.content_url,
+          a.redirect_url,
+          a.is_ad,
+          COALESCE(v.view_count, 0) AS view_count,
+          COALESCE(l.like_count, 0) AS like_count,
+          COALESCE(c.comment_count, 0) AS comment_count,
+          COALESCE(s.share_count, 0) AS share_count
+        FROM advertisements a
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+        WHERE a.is_active = true
+        ORDER BY a.created_at DESC
         LIMIT $1
       `;
+
 
       adsResult = (await pool.query(adsQuery, [adLimit])).rows;
     }
@@ -202,22 +280,15 @@ router.get("/top10", async (req, res) => {
       totalReturned: finalData.length,
       data: finalData,
     });
-
   } catch (error) {
     console.error("Top10 fetch error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-
 router.get("/banner", async (req, res) => {
   try {
-    const {
-      category = "all",
-      count = 5,
-      ads = 2,
-      afterTime,
-    } = req.query;
+    const { category = "all", count = 5, ads = 2, afterTime } = req.query;
 
     const parsedCount = parseInt(count) || 5;
     const parsedAds = parseInt(ads) || 2;
@@ -226,7 +297,12 @@ router.get("/banner", async (req, res) => {
     let paramIndex = 1;
 
     let newsQuery = `
-      SELECT *
+      SELECT n.news_id as id, 
+        n.title, 
+        n.short_description as description, 
+        n.content_url,
+        n.redirect_url,
+        n.is_ad
       FROM news n
       WHERE n.is_active = true 
       AND (n.is_featured = true OR n.is_breaking = true)
@@ -253,13 +329,18 @@ router.get("/banner", async (req, res) => {
     const newsResult = await pool.query(newsQuery, newsParams);
 
     const adQuery = `
-      SELECT *
+      SELECT ad_id as id, 
+        title, 
+        description as description, 
+        content_url,
+        redirect_url,
+        is_ad
       FROM advertisements
       WHERE is_active = true
       ORDER BY priority_score DESC
       LIMIT $1
     `;
-    const adResult = await pool.query(adQuery, [parsedAds]);    
+    const adResult = await pool.query(adQuery, [parsedAds]);
 
     const banners = [...newsResult.rows];
 
@@ -285,7 +366,6 @@ router.get("/banner", async (req, res) => {
   }
 });
 
-
 router.get("/feed", verifyToken, async (req, res) => {
   try {
     const {
@@ -297,7 +377,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       lng,
       category,
       afterTime,
-      currentPage = 1
+      currentPage = 1,
     } = req.query;
 
     const parsedLimit = parseInt(limit) || 10;
@@ -329,7 +409,12 @@ router.get("/feed", verifyToken, async (req, res) => {
 
     let newsQuery = `
       SELECT 
-        n.*,
+        n.news_id as id, 
+        n.title, 
+        n.short_description as description, 
+        n.content_url,
+        n.redirect_url,
+        n.is_ad,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -389,13 +474,15 @@ router.get("/feed", verifyToken, async (req, res) => {
             END) +
 
             (CASE
-              WHEN n.geo_point IS NOT NULL AND $${idx+1}::float IS NOT NULL AND $${idx+2}::float IS NOT NULL
+              WHEN n.geo_point IS NOT NULL AND $${
+                idx + 1
+              }::float IS NOT NULL AND $${idx + 2}::float IS NOT NULL
               THEN 
                 1 / (
                   1 + (
                     ST_DistanceSphere(
                       n.geo_point::geometry,
-                      ST_SetSRID(ST_MakePoint($${idx+2}, $${idx+1}), 4326)
+                      ST_SetSRID(ST_MakePoint($${idx + 2}, $${idx + 1}), 4326)
                     ) / 10000
                   )
                 )
@@ -410,7 +497,6 @@ router.get("/feed", verifyToken, async (req, res) => {
         params.push(lat || null);
         params.push(lng || null);
         idx += 3;
-
       } else {
         newsQuery += ` ORDER BY n.created_at DESC`;
       }
@@ -420,7 +506,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         views: "views",
         likes: "news_likes",
         comments: "comments",
-        shares: "shares"
+        shares: "shares",
       };
       newsQuery += ` ORDER BY ${sortMap[sort]} DESC`;
     }
@@ -433,9 +519,23 @@ router.get("/feed", verifyToken, async (req, res) => {
     const news = newsRes.rows;
 
     let adQuery = `
-      SELECT *
-      FROM advertisements
-      WHERE is_active = true
+      SELECT
+        a.ad_id AS id,
+        a.title,
+        a.description,
+        a.content_url,
+        a.redirect_url,
+        a.is_ad,
+        COALESCE(v.view_count, 0) AS view_count,
+        COALESCE(l.like_count, 0) AS like_count,
+        COALESCE(c.comment_count, 0) AS comment_count,
+        COALESCE(s.share_count, 0) AS share_count
+      FROM advertisements a
+      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+      WHERE a.is_active = true
     `;
 
     if (lat && lng) {
@@ -476,15 +576,13 @@ router.get("/feed", verifyToken, async (req, res) => {
       ads_count: adsList.length,
       news,
       ads: adsList,
-      data: [...news, ...adsList]
+      data: [...news, ...adsList],
     });
-
   } catch (err) {
     console.error("Feed API error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 
 // Get news list with metrics
 router.get("/", async (req, res) => {
@@ -536,7 +634,7 @@ router.get("/", async (req, res) => {
     // Get news with metrics
     const query = `
       SELECT 
-        n.news_id, 
+        n.news_id as id, 
         n.title, 
         n.short_description, 
         n.content_url, 
@@ -870,7 +968,7 @@ router.get("/top/single-metric", async (req, res) => {
 
     // Build query based on metric
     let query = `
-      SELECT n.news_id, n.title, n.short_description, n.content_url, 
+      SELECT n.news_id as id, n.title, n.short_description, n.content_url, 
         n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
     `;
 
@@ -993,7 +1091,7 @@ router.get("/top/multi-metric", async (req, res) => {
 
     // Build complex query with weighted score
     let query = `
-      SELECT n.news_id, n.title, n.short_description, n.content_url, 
+      SELECT n.news_id as id, n.title, n.short_description, n.content_url, 
         n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
     `;
 
