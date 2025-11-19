@@ -39,7 +39,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-router.get("/", verifyToken, async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM categories ORDER BY id ASC");
 
