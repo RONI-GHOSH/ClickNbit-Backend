@@ -207,7 +207,7 @@ router.get("/top10", async (req, res) => {
         n.redirect_url,
         n.is_ad,
         n.type_id,
-        n.updated_at
+        n.updated_at,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -254,7 +254,7 @@ router.get("/top10", async (req, res) => {
           a.redirect_url,
           a.is_ad,
           a.type_id,
-          a.updated_at
+          a.updated_at,
           COALESCE(v.view_count, 0) AS view_count,
           COALESCE(l.like_count, 0) AS like_count,
           COALESCE(c.comment_count, 0) AS comment_count,
@@ -446,7 +446,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         n.redirect_url,
         n.is_ad,
         n.type_id,
-        n.updated_at
+        n.updated_at,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -558,8 +558,8 @@ router.get("/feed", verifyToken, async (req, res) => {
         a.content_url,
         a.redirect_url,
         a.is_ad,
-        a.type_id
-        a.updated_at
+        a.type_id,
+        a.updated_at,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
