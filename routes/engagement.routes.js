@@ -26,22 +26,45 @@ router.post("/like", verifyToken, async (req, res) => {
     const user = req.user;
     const { news_id } = req.body;
 
-    const result = await pool.query(
-      `INSERT INTO news_likes (
-        news_id,
-        user_id
-       )
-       VALUES(
-        $1,
-        $2
-       )
-       RETURNING *
-       `,
+    if (!news_id) {
+      return res.status(400).json({ success: false, message: "news_id is required" });
+    }
+
+    const existing = await pool.query(
+      `SELECT * FROM news_likes WHERE news_id = $1 AND user_id = $2`,
       [news_id, user.id]
     );
-    res.status(201).send(result.rows[0]);
+
+    if (existing.rows.length > 0) {
+      // Like exists → remove it
+      await pool.query(
+        `DELETE FROM news_likes WHERE news_id = $1 AND user_id = $2`,
+        [news_id, user.id]
+      );
+
+      return res.json({
+        success: true,
+        liked: false,
+        message: "Like removed"
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO news_likes (news_id, user_id)
+       VALUES ($1, $2)
+       RETURNING *`,
+      [news_id, user.id]
+    );
+
+    return res.status(201).json({
+      success: true,
+      liked: true,
+      data: result.rows[0],
+      message: "Like added"
+    });
+
   } catch (error) {
-    console.error("Like send error:", error);
+    console.error("Like toggle error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
