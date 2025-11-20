@@ -69,4 +69,31 @@ router.post("/like", verifyToken, async (req, res) => {
   }
 });
 
+router.post("/comment", verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const { news_id , content } = req.body;
+
+    if (!news_id || !content) {
+      return res.status(400).json({ success: false, message: "news_id and content is required" });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO comments (news_id, user_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [news_id, user.id, content]
+    );
+
+    return res.status(201).json({
+      success: true,
+      data: result.rows[0],
+    });
+
+  } catch (error) {
+    console.error("Like toggle error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 module.exports = router;
