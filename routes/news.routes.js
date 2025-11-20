@@ -576,7 +576,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         a.content_url,
         a.redirect_url,
         a.is_featured,
-        a.category
+        a.category,
         a.is_ad,
         a.type_id,
         a.target_tags as tags,
