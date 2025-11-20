@@ -341,8 +341,16 @@ router.get("/banner", async (req, res) => {
         n.is_ad,
         n.tags,
         n.type_id,
-        n.updated_at
+        n.updated_at,
+        COALESCE(v.view_count, 0) AS view_count,
+        COALESCE(l.like_count, 0) AS like_count,
+        COALESCE(c.comment_count, 0) AS comment_count,
+        COALESCE(s.share_count, 0) AS share_count
       FROM news n
+      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
       WHERE n.is_active = true 
       AND (n.is_featured = true OR n.is_breaking = true)
     `;
@@ -367,23 +375,51 @@ router.get("/banner", async (req, res) => {
 
     const newsResult = await pool.query(newsQuery, newsParams);
 
-    const adQuery = `
-      SELECT ad_id as id, 
-        title, 
-        description as description, 
-        content_url,
-        redirect_url,
-        is_featured,
-        category,
-        is_ad,
-        type_id,
-        target_tags as tags,
-        updated_at
-      FROM advertisements
-      WHERE is_active = true
+    let adQuery = `
+      SELECT
+        a.ad_id AS id,
+        a.title,
+        a.description,
+        a.content_url,
+        a.redirect_url,
+        a.is_featured,
+        a.category,
+        a.is_ad,
+        a.type_id,
+        a.target_tags as tags,
+        a.updated_at,
+        COALESCE(v.view_count, 0) AS view_count,
+        COALESCE(l.like_count, 0) AS like_count,
+        COALESCE(c.comment_count, 0) AS comment_count,
+        COALESCE(s.share_count, 0) AS share_count
+      FROM advertisements a
+      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+      WHERE a.is_active = true
       ORDER BY priority_score DESC
       LIMIT $1
     `;
+
+    // const 
+    //   SELECT ad_id as id, 
+    //     title, 
+    //     description as description, 
+    //     content_url,
+    //     redirect_url,
+    //     is_featured,
+    //     category,
+    //     is_ad,
+    //     type_id,
+    //     target_tags as tags,
+    //     updated_at,
+        
+    //   FROM advertisements
+    //   WHERE is_active = true
+    //   ORDER BY priority_score DESC
+    //   LIMIT $1
+    // ;
     const adResult = await pool.query(adQuery, [parsedAds]);
 
     const banners = [...newsResult.rows];
