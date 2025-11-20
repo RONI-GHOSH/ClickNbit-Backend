@@ -96,4 +96,31 @@ router.post("/comment", verifyToken, async (req, res) => {
   }
 });
 
+router.post("/share", verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const { news_id , platform } = req.body;
+
+    if (!news_id || !platform) {
+      return res.status(400).json({ success: false, message: "news_id and content is required" });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO shares (news_id, user_id, platform)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [news_id, user.id, platform]
+    );
+
+    return res.status(201).json({
+      success: true,
+      data: result.rows[0],
+    });
+
+  } catch (error) {
+    console.error("Like toggle error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 module.exports = router;
