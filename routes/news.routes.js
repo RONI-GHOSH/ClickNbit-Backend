@@ -208,6 +208,7 @@ router.get("/top10", async (req, res) => {
         n.is_featured,
         n.is_breaking,
         n.category,
+        n.tags,
         n.is_ad,
         n.type_id,
         n.updated_at,
@@ -258,6 +259,7 @@ router.get("/top10", async (req, res) => {
           a.is_featured,
           a.category,
           a.is_ad,
+          a.target_tags as tags,
           a.type_id,
           a.updated_at,
           COALESCE(v.view_count, 0) AS view_count,
@@ -337,6 +339,7 @@ router.get("/banner", async (req, res) => {
         n.category,
         n.is_breaking,
         n.is_ad,
+        n.tags,
         n.type_id,
         n.updated_at
       FROM news n
@@ -374,6 +377,7 @@ router.get("/banner", async (req, res) => {
         category,
         is_ad,
         type_id,
+        target_tags as tags,
         updated_at
       FROM advertisements
       WHERE is_active = true
@@ -458,6 +462,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         n.category,
         n.is_breaking,
         n.is_ad,
+        n.tags,
         n.type_id,
         n.updated_at,
         COALESCE(v.view_count, 0) AS view_count,
@@ -574,6 +579,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         a.category
         a.is_ad,
         a.type_id,
+        a.target_tags as tags,
         a.updated_at,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
