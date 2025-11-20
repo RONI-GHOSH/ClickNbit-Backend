@@ -206,6 +206,7 @@ router.get("/top10", async (req, res) => {
         n.content_url,
         n.redirect_url,
         n.is_ad,
+        n.type_id,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -251,6 +252,7 @@ router.get("/top10", async (req, res) => {
           a.content_url,
           a.redirect_url,
           a.is_ad,
+          a.type_id,
           COALESCE(v.view_count, 0) AS view_count,
           COALESCE(l.like_count, 0) AS like_count,
           COALESCE(c.comment_count, 0) AS comment_count,
@@ -269,7 +271,8 @@ router.get("/top10", async (req, res) => {
       adsResult = (await pool.query(adsQuery, [adLimit])).rows;
     }
 
-    const finalData = [...newsResult.rows, ...adsResult];
+    // const finalData = [...newsResult.rows, ...adsResult];
+    const finalData = mergeNewsWithAds(newsResult.rows, adsResult);
 
     res.status(200).json({
       success: true,
@@ -285,6 +288,27 @@ router.get("/top10", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+function mergeNewsWithAds(news, ads) {
+  if (ads.length === 0) return news;
+
+  const result = [...news];
+  const interval = Math.floor(news.length / (ads.length + 1));
+
+  let insertIndex = interval;
+
+  ads.forEach(ad => {
+    if (insertIndex > result.length) {
+      result.push(ad);
+    } else {
+      result.splice(insertIndex, 0, ad);
+      insertIndex += interval + 1;
+    }
+  });
+
+  return result;
+}
+
 
 router.get("/banner", async (req, res) => {
   try {
@@ -302,7 +326,8 @@ router.get("/banner", async (req, res) => {
         n.short_description as description, 
         n.content_url,
         n.redirect_url,
-        n.is_ad
+        n.is_ad,
+        n.type_id
       FROM news n
       WHERE n.is_active = true 
       AND (n.is_featured = true OR n.is_breaking = true)
@@ -334,7 +359,8 @@ router.get("/banner", async (req, res) => {
         description as description, 
         content_url,
         redirect_url,
-        is_ad
+        is_ad,
+        type_id
       FROM advertisements
       WHERE is_active = true
       ORDER BY priority_score DESC
@@ -415,6 +441,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         n.content_url,
         n.redirect_url,
         n.is_ad,
+        n.type_id
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -526,6 +553,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         a.content_url,
         a.redirect_url,
         a.is_ad,
+        a.type_id
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -567,6 +595,8 @@ router.get("/feed", verifyToken, async (req, res) => {
     const adsRes = await db.query(adQuery);
     const adsList = adsRes.rows;
 
+    const finalData = mergeNewsWithAds(news, adsList);
+
     res.status(200).json({
       success: true,
       page,
@@ -576,7 +606,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       ads_count: adsList.length,
       news,
       ads: adsList,
-      data: [...news, ...adsList],
+      data: finalData,
     });
   } catch (err) {
     console.error("Feed API error:", err);
@@ -643,6 +673,7 @@ router.get("/", async (req, res) => {
         n.is_featured, 
         n.is_breaking, 
         n.created_at,
+        n.type_id
         COUNT(DISTINCT v.view_id) AS view_count,
         COUNT(DISTINCT l.like_id) AS like_count,
         COUNT(DISTINCT c.comment_id) AS comment_count
