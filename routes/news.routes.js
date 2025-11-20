@@ -207,6 +207,7 @@ router.get("/top10", async (req, res) => {
         n.redirect_url,
         n.is_ad,
         n.type_id,
+        n.updated_at
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -253,6 +254,7 @@ router.get("/top10", async (req, res) => {
           a.redirect_url,
           a.is_ad,
           a.type_id,
+          a.updated_at
           COALESCE(v.view_count, 0) AS view_count,
           COALESCE(l.like_count, 0) AS like_count,
           COALESCE(c.comment_count, 0) AS comment_count,
@@ -327,7 +329,8 @@ router.get("/banner", async (req, res) => {
         n.content_url,
         n.redirect_url,
         n.is_ad,
-        n.type_id
+        n.type_id,
+        n.updated_at
       FROM news n
       WHERE n.is_active = true 
       AND (n.is_featured = true OR n.is_breaking = true)
@@ -360,7 +363,8 @@ router.get("/banner", async (req, res) => {
         content_url,
         redirect_url,
         is_ad,
-        type_id
+        type_id,
+        updated_at
       FROM advertisements
       WHERE is_active = true
       ORDER BY priority_score DESC
@@ -441,7 +445,8 @@ router.get("/feed", verifyToken, async (req, res) => {
         n.content_url,
         n.redirect_url,
         n.is_ad,
-        n.type_id
+        n.type_id,
+        n.updated_at
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -554,6 +559,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         a.redirect_url,
         a.is_ad,
         a.type_id
+        a.updated_at
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
@@ -673,7 +679,8 @@ router.get("/", async (req, res) => {
         n.is_featured, 
         n.is_breaking, 
         n.created_at,
-        n.type_id
+        n.type_id,
+        n.updated_at
         COUNT(DISTINCT v.view_id) AS view_count,
         COUNT(DISTINCT l.like_id) AS like_count,
         COUNT(DISTINCT c.comment_id) AS comment_count
