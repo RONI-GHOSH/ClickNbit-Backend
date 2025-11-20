@@ -17,6 +17,7 @@ const uploadRoutes = require('./routes/upload.routes');
 const newsTypesRoutes = require('./routes/news-types.routes');
 const catRoutes = require('./routes/cat.routes');
 const adFormatsRoutes = require('./routes/ad-formats.routes');
+const engagementRoutes = require('./routes/engagement.routes');
 const advertisementsRoutes = require('./routes/advertisements.routes');
 
 // Initialize express app
@@ -40,6 +41,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/news-types', newsTypesRoutes);
 app.use('/api/categories', catRoutes);
 app.use('/api/ad-formats', adFormatsRoutes);
+app.use('/api/engagements', engagementRoutes);
 app.use('/api/advertisements', advertisementsRoutes);
 
 // Root route
