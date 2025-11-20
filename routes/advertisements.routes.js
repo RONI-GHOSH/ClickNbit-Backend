@@ -242,6 +242,7 @@ router.post("/", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       start_at,
       end_at,
+      category
     } = req.body;
 
     // Validate required fields
@@ -258,11 +259,11 @@ router.post("/", verifyAdmin, async (req, res) => {
         admin_id, format_id, title, description, content_url, redirect_url,
         target_tags, target_categories, area_names, geo_point, radius_km,
         is_strict_location, view_target, click_target, like_target, share_target,
-        is_active, is_featured, priority_score, relevance_expires_at, start_at, end_at
+        is_active, is_featured, priority_score, relevance_expires_at, start_at, end_at, category
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, 
         ST_GeographyFromText($10), 
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
       ) RETURNING *
     `;
 
@@ -289,6 +290,7 @@ router.post("/", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       start_at || new Date(),
       end_at || null,
+      category || null
     ];
 
     const result = await pool.query(query, values);
