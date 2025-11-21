@@ -147,14 +147,22 @@ router.get("/details", async (req, res) => {
         n.short_description AS description,
         n.content_url,
         n.redirect_url,
+        n.is_featured,
+        n.is_breaking,
+        n.category,
+        n.tags,
+        n.is_ad,
+        n.type_id,
+        n.created_at,
+        n.updated_at,
+        n.area_type,
+        n.priority_score,
+
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
-        COALESCE(s.share_count, 0) AS share_count,
-        n.created_at,
-        n.category,
-        n.area_type,
-        n.priority_score
+        COALESCE(s.share_count, 0) AS share_count
+
       FROM news n
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
@@ -175,7 +183,7 @@ router.get("/details", async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: result.rows[0],
+      data: result.rows[0]
     });
 
   } catch (err) {
