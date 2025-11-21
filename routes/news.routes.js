@@ -737,7 +737,7 @@ router.get("/", async (req, res) => {
         n.is_breaking, 
         n.created_at,
         n.type_id,
-        n.updated_at
+        n.updated_at,
         COUNT(DISTINCT v.view_id) AS view_count,
         COUNT(DISTINCT l.like_id) AS like_count,
         COUNT(DISTINCT c.comment_id) AS comment_count
