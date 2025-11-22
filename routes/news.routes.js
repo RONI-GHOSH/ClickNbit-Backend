@@ -129,6 +129,43 @@ router.post("/", verifyAdmin, async (req, res) => {
   }
 });
 
+router.delete("/:news_id", verifyAdmin, async (req, res) => {
+  try {
+    const { news_id } = req.params;
+
+    if (!news_id) {
+      return res.status(400).json({
+        success: false,
+        message: "News ID is required",
+      });
+    }
+
+    const result = await db.query(
+      `DELETE FROM news 
+       WHERE news_id = $1 
+       RETURNING news_id, title, content_url, is_active, created_at`,
+      [news_id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "News item not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "News item deleted successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("News deletion error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
 router.get("/details", async (req, res) => {
   try {
     const { news_id } = req.query;
