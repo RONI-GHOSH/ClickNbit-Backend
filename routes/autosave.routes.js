@@ -375,7 +375,7 @@ router.patch("/ads", verifyAdmin, async (req, res) => {
         } else {
           updates.push(`${field} = $${index}`);
         }
-        values.push(req.body[field]);
+        values.push(req.body[field] || null);
         index++;
       }
     }
