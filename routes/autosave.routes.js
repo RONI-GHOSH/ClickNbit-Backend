@@ -284,8 +284,8 @@ router.post("/ads", verifyAdmin, async (req, res) => {
       is_featured,
       priority_score,
       relevance_expires_at,
-      start_at,
-      end_at,
+      start_at || null,
+      end_at || null,
     ];
 
     const result = await pool.query(query, values);
