@@ -320,7 +320,7 @@ router.delete("/:advertisement_id", verifyAdmin, async (req, res) => {
     const query = `
       DELETE FROM advertisements
       WHERE ad_id = $1
-      RETURNING adt_id, title, content_url, is_active, created_at
+      RETURNING ad_id, title, content_url, is_active, created_at
     `;
 
     const result = await pool.query(query, [advertisement_id]);
