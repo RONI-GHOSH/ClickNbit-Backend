@@ -306,6 +306,44 @@ router.post("/", verifyAdmin, async (req, res) => {
   }
 });
 
+router.delete("/:advertisement_id", verifyAdmin, async (req, res) => {
+  try {
+    const { advertisement_id } = req.params;
+
+    if (!advertisement_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Advertisement ID is required",
+      });
+    }
+
+    const query = `
+      DELETE FROM advertisements
+      WHERE advertisement_id = $1
+      RETURNING advertisement_id, title, content_url, is_active, created_at
+    `;
+
+    const result = await pool.query(query, [advertisement_id]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Advertisement not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Advertisement deleted successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error deleting advertisement:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
 // Update advertisement (admin only)
 router.put("/:id", verifyAdmin, async (req, res) => {
   try {
