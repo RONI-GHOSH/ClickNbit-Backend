@@ -21,6 +21,23 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+router.get("/likedlist", verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const result = await pool.query(
+      `SELECT news_id, ad_id, is_ad 
+       FROM news_likes 
+       WHERE user_id = $1`,
+      [user.id]
+    );
+    res.json({ success: true, data: result.rows });
+  }
+  catch (error) {
+    console.error("Liked list error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 router.post("/like", verifyToken, async (req, res) => {
   try {
     const user = req.user;
@@ -84,11 +101,24 @@ router.post("/comment", verifyToken, async (req, res) => {
     const idColumn = is_ad ? "ad_id" : "news_id";
 
     const result = await pool.query(
-      `INSERT INTO comments (${idColumn}, user_id, content, parent_id, is_ad)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [id, user.id, content, parent_id, is_ad]
-    );
+    `
+    WITH inserted AS (
+      INSERT INTO comments (${idColumn}, user_id, content, parent_id, is_ad)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING comment_id, content AS comment, created_at, user_id
+    )
+    SELECT 
+      i.comment_id,
+      i.comment,
+      i.created_at,
+      u.name AS username,
+      u.profile_image_url AS userprofileimage,
+      0 AS replycount
+    FROM inserted i
+    LEFT JOIN users u ON u.user_id = i.user_id;
+    `,
+    [id, user.id, content, parent_id, is_ad]
+  );
 
     return res.status(201).json({
       success: true,

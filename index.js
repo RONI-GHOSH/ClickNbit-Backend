@@ -20,6 +20,7 @@ const adFormatsRoutes = require('./routes/ad-formats.routes');
 const engagementRoutes = require('./routes/engagement.routes');
 const advertisementsRoutes = require('./routes/advertisements.routes');
 const autosaveRoutes = require('./routes/autosave.routes');
+const saveRoutes = require('./routes/save.routes');
 
 // Initialize express app
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api/ad-formats', adFormatsRoutes);
 app.use('/api/engagements', engagementRoutes);
 app.use('/api/advertisements', advertisementsRoutes);
 app.use('/api/autosave', autosaveRoutes);
+app.use('/api/save', saveRoutes);
 
 // Root route
 app.get('/', (req, res) => {
