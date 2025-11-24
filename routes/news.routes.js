@@ -270,7 +270,7 @@ router.get("/top10", verifyToken, async (req, res) => {
         COALESCE(c.comment_count, 0) AS comment_count,
         COALESCE(s.share_count, 0) AS share_count,
 
-        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
         CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM news n
