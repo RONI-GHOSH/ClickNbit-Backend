@@ -368,7 +368,7 @@ router.get("/top10", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/public/news", async (req, res) => {
+router.get("/public", async (req, res) => {
   try {
     const { category = "all", limit = 3 } = req.query;
 
