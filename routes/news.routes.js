@@ -201,6 +201,7 @@ router.get("/details", verifyToken, async (req, res) => {
         COALESCE(s.share_count, 0) AS share_count,
 
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM news n
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
@@ -208,6 +209,8 @@ router.get("/details", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $2
+      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $2
+      
       WHERE n.news_id = $1 AND n.is_active = true
       LIMIT 1
     `;
@@ -268,6 +271,7 @@ router.get("/top10", verifyToken, async (req, res) => {
         COALESCE(s.share_count, 0) AS share_count,
 
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM news n
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
@@ -275,6 +279,7 @@ router.get("/top10", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $${paramIndex}
+      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $${paramIndex} AND sv.is_ad = false
     `;
 
     params.push(userId);
@@ -329,6 +334,7 @@ router.get("/top10", verifyToken, async (req, res) => {
           COALESCE(s.share_count, 0) AS share_count,
 
           CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+          CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
         FROM advertisements a
         LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
@@ -336,6 +342,7 @@ router.get("/top10", verifyToken, async (req, res) => {
         LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
         LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
+        LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
         WHERE a.is_active = true
         ORDER BY a.created_at DESC
         LIMIT $1
@@ -393,6 +400,7 @@ router.get("/banner", verifyToken, async (req, res) => {
         COALESCE(s.share_count, 0) AS share_count,
 
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM news n
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
@@ -400,6 +408,8 @@ router.get("/banner", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+
       WHERE n.is_active = true 
       AND (n.is_featured = true OR n.is_breaking = true)
     `;
@@ -441,6 +451,7 @@ router.get("/banner", verifyToken, async (req, res) => {
         COALESCE(s.share_count, 0) AS share_count,
 
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM advertisements a
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
@@ -448,6 +459,8 @@ router.get("/banner", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
+      LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
+
       WHERE a.is_active = true
       ORDER BY priority_score DESC
       LIMIT $1
@@ -532,6 +545,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         COALESCE(s.share_count, 0) AS share_count,
 
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM news n
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
@@ -539,6 +553,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
       WHERE n.is_active = true
     `;
 
@@ -614,6 +629,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         COALESCE(s.share_count, 0) AS share_count,
 
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM advertisements a
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
@@ -621,6 +637,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $1
+      LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
       WHERE a.is_active = true
     `;
 
