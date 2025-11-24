@@ -166,61 +166,141 @@ router.get("/completeness", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const userResult = await db.query(
-      `SELECT phone, email FROM users WHERE user_id = $1`,
-      [userId]
-    );
+    // -------------------------------
+    // 1. Fetch USER PROFILE
+    // -------------------------------
+    const userQuery = `
+      SELECT name, email, phone, profile_image_url, city, state, age, country
+      FROM users
+      WHERE user_id = $1
+    `;
+
+    const userResult = await db.query(userQuery, [userId]);
 
     if (userResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User profile not found",
+      return res.status(200).json({
+        success: true,
+        data: {
+          profileComplete: false,
+          selected_categories: false
+        }
       });
     }
 
-    const user = userResult.rows[0];
+    const u = userResult.rows[0];
 
-    const isPhonePresent = !!user.phone;
-    const isEmailPresent = !!user.email;
-    const isRegistered = isPhonePresent || isEmailPresent;
+    // Phone/Email logic:
+    const hasPhoneOrEmail = !!u.phone || !!u.email;
 
-    const prefResult = await db.query(
-      `SELECT preferred_news_type, selected_categories, user_locations,
-              user_locations_tags, last_known_location
-       FROM preferences WHERE user_id = $1`,
-      [userId]
-    );
+    // Required fields:
+    const requiredFieldsPresent =
+      !!u.name &&
+      hasPhoneOrEmail &&
+      !!u.profile_image_url &&
+      !!u.city &&
+      !!u.state &&
+      !!u.age &&
+      !!u.country;
 
-    let prefs = prefResult.rows[0] || {};
+    const profileComplete = requiredFieldsPresent;
 
-    const preferenceCompleteness = {
-      preferred_news_type: !!prefs.preferred_news_type,
-      selected_categories: Array.isArray(prefs.selected_categories) && prefs.selected_categories.length > 0,
-      user_locations: prefs.user_locations && Object.keys(prefs.user_locations).length > 0,
-      user_locations_tags: !!prefs.user_locations_tags,
-      last_known_location: !!prefs.last_known_location,
-    };
+    // -------------------------------
+    // 2. Fetch USER PREFERENCES
+    // -------------------------------
+    const prefQuery = `
+      SELECT selected_categories 
+      FROM preferences 
+      WHERE user_id = $1
+    `;
+
+    const prefResult = await db.query(prefQuery, [userId]);
+
+    let selectedCategoriesComplete = false;
+
+    if (prefResult.rows.length > 0) {
+      const prefs = prefResult.rows[0];
+      selectedCategoriesComplete =
+        Array.isArray(prefs.selected_categories) &&
+        prefs.selected_categories.length > 0;
+    }
 
     return res.status(200).json({
       success: true,
       data: {
-        registration: {
-          phone_present: isPhonePresent,
-          email_present: isEmailPresent,
-          is_registered: isRegistered,
-        },
-        preferences: preferenceCompleteness,
-      },
+        profileComplete,
+        selected_categories: selectedCategoriesComplete
+      }
     });
-  } catch (err) {
-    console.error("Error fetching completeness:", err);
-    res.status(500).json({
+
+  } catch (error) {
+    console.error("Error in /completeness:", error);
+    return res.status(500).json({
       success: false,
-      message: "Server error",
-      error: err.message,
+      message: "Server error"
     });
   }
 });
+
+
+// router.get("/completeness", verifyToken, async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+
+//     const userResult = await db.query(
+//       `SELECT phone, email FROM users WHERE user_id = $1`,
+//       [userId]
+//     );
+
+//     if (userResult.rows.length === 0) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "User profile not found",
+//       });
+//     }
+
+//     const user = userResult.rows[0];
+
+//     const isPhonePresent = !!user.phone;
+//     const isEmailPresent = !!user.email;
+//     const isRegistered = isPhonePresent || isEmailPresent;
+
+//     const prefResult = await db.query(
+//       `SELECT preferred_news_type, selected_categories, user_locations,
+//               user_locations_tags, last_known_location
+//        FROM preferences WHERE user_id = $1`,
+//       [userId]
+//     );
+
+//     let prefs = prefResult.rows[0] || {};
+
+//     const preferenceCompleteness = {
+//       preferred_news_type: !!prefs.preferred_news_type,
+//       selected_categories: Array.isArray(prefs.selected_categories) && prefs.selected_categories.length > 0,
+//       user_locations: prefs.user_locations && Object.keys(prefs.user_locations).length > 0,
+//       user_locations_tags: !!prefs.user_locations_tags,
+//       last_known_location: !!prefs.last_known_location,
+//     };
+
+//     return res.status(200).json({
+//       success: true,
+//       data: {
+//         registration: {
+//           phone_present: isPhonePresent,
+//           email_present: isEmailPresent,
+//           is_registered: isRegistered,
+//         },
+//         preferences: preferenceCompleteness,
+//       },
+//     });
+//   } catch (err) {
+//     console.error("Error fetching completeness:", err);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//       error: err.message,
+//     });
+//   }
+// });
 
 
 
