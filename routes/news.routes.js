@@ -380,10 +380,11 @@ router.get("/public/news", async (req, res) => {
         n.title,
         n.short_description AS subtitle,
         n.content_url AS image_url,
-        n.created_at
+        n.created_at,
+        n.priority_score
       FROM news n
       WHERE n.is_active = true
-      AND n.is_ad = false
+      AND (n.is_featured = true OR n.is_breaking = true)
     `;
 
     const params = [];
@@ -395,7 +396,7 @@ router.get("/public/news", async (req, res) => {
       paramIndex++;
     }
 
-    query += ` ORDER BY n.created_at DESC LIMIT $${paramIndex} `;
+    query += ` ORDER BY n.priority_score DESC, n.created_at DESC LIMIT $${paramIndex} `;
     params.push(parsedLimit);
 
     const result = await pool.query(query, params);
@@ -434,6 +435,7 @@ router.get("/public/news", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 
 router.get("/banner", verifyToken, async (req, res) => {
