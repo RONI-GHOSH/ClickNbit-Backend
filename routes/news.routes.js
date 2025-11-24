@@ -368,6 +368,74 @@ router.get("/top10", verifyToken, async (req, res) => {
   }
 });
 
+router.get("/public/news", async (req, res) => {
+  try {
+    const { category = "all", limit = 3 } = req.query;
+
+    const parsedLimit = parseInt(limit) || 10;
+
+    let query = `
+      SELECT 
+        n.news_id AS id,
+        n.title,
+        n.short_description AS subtitle,
+        n.content_url AS image_url,
+        n.created_at
+      FROM news n
+      WHERE n.is_active = true
+      AND n.is_ad = false
+    `;
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (category !== "all") {
+      query += ` AND n.category = $${paramIndex} `;
+      params.push(category);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY n.created_at DESC LIMIT $${paramIndex} `;
+    params.push(parsedLimit);
+
+    const result = await pool.query(query, params);
+
+    // Utility functions
+    const calculateReadTime = (text = "") => {
+      const words = text.split(" ").length;
+      const minutes = Math.ceil(words / 200);
+      return `${minutes} Min Reads`;
+    };
+
+    const timeAgo = (date) => {
+      const diff = (Date.now() - new Date(date).getTime()) / 1000;
+      if (diff < 60) return "Just now";
+      if (diff < 3600) return `${Math.floor(diff / 60)} Min Ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)} Hours Ago`;
+      return `${Math.floor(diff / 86400)} Days Ago`;
+    };
+
+    const formatted = result.rows.map(news => ({
+      imageUrl: news.image_url || "https://picsum.photos/seed/default/800/600",
+      readTime: calculateReadTime(news.subtitle || news.title),
+      timeAgo: timeAgo(news.created_at),
+      title: news.title,
+      subtitle: news.subtitle
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: formatted.length,
+      data: formatted
+    });
+
+  } catch (error) {
+    console.error("Public news error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
 router.get("/banner", verifyToken, async (req, res) => {
   try {
     const { category = "all", count = 5, ads = 2, afterTime } = req.query;
