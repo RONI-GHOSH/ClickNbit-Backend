@@ -385,6 +385,7 @@ router.get("/public", async (req, res) => {
       FROM news n
       WHERE n.is_active = true
       AND (n.is_featured = true OR n.is_breaking = true)
+      AND n.type_id = 1
     `;
 
     const params = [];
