@@ -163,8 +163,9 @@ router.patch("/", verifyToken, async (req, res) => {
 });
 
 router.get("/completeness", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
+    try {
+        const userId = req.user.id;
+})
 
     // -------------------------------
     // 1. Fetch USER PROFILE
@@ -240,6 +241,57 @@ router.get("/completeness", verifyToken, async (req, res) => {
     });
   }
 });
+
+// POST or UPDATE FCM token
+router.post("/fcm", verifyToken, async (req, res) => {
+  const userId = req.user.id;
+  const { fcm_token } = req.body;
+
+  if (!fcm_token) {
+    return res.status(400).json({ message: "FCM token is required" });
+  }
+
+  try {
+    // If this token already exists → update user_id
+    const updateQuery = `
+      UPDATE fcm_tokens
+      SET user_id = $1
+      WHERE fcm_token = $2
+      RETURNING *;
+    `;
+
+    const updateResult = await pool.query(updateQuery, [userId, fcm_token]);
+
+    if (updateResult.rowCount > 0) {
+      return res.json({
+        message: "FCM token updated successfully",
+        data: updateResult.rows[0]
+      });
+    }
+
+    // Insert new FCM token
+    const insertQuery = `
+      INSERT INTO fcm_tokens (user_id, fcm_token)
+      VALUES ($1, $2)
+      ON CONFLICT (fcm_token)
+      DO UPDATE SET user_id = EXCLUDED.user_id
+      RETURNING *;
+    `;
+
+    const insertResult = await db.query(insertQuery, [userId, fcm_token]);
+
+    return res.json({
+      message: "FCM token saved successfully",
+      data: insertResult.rows[0]
+    });
+
+  } catch (err) {
+    console.error("Error saving FCM token:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 
 
 // router.get("/completeness", verifyToken, async (req, res) => {
