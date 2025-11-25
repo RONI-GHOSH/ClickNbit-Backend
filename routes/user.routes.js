@@ -260,7 +260,7 @@ router.post("/fcm", verifyToken, async (req, res) => {
       RETURNING *;
     `;
 
-    const updateResult = await pool.query(updateQuery, [userId, fcm_token]);
+    const updateResult = await db.query(updateQuery, [userId, fcm_token]);
 
     if (updateResult.rowCount > 0) {
       return res.json({
