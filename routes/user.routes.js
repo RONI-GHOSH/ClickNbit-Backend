@@ -163,9 +163,8 @@ router.patch("/", verifyToken, async (req, res) => {
 });
 
 router.get("/completeness", verifyToken, async (req, res) => {
-    try {
-        const userId = req.user.id;
-})
+  try {
+    const userId = req.user.id;
 
     // -------------------------------
     // 1. Fetch USER PROFILE
