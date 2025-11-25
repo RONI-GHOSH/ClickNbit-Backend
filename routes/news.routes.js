@@ -437,6 +437,103 @@ router.get("/public", async (req, res) => {
   }
 });
 
+router.get("/search-news", verifyToken, async (req, res) => {
+  try {
+    const { q = "", count = 20, afterTime } = req.query;
+
+    if (!q || q.trim() === "") {
+      return res.status(400).json({ success: false, message: "Search query required" });
+    }
+
+    const parsedCount = parseInt(count) || 20;
+    const userId = req.user?.id || null;
+
+    // Split keywords (e.g. "sports cricket worldcup")
+    const keywords = q
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(k => k.length > 1);
+
+    const params = [userId];
+    let i = 2;
+
+    let query = `
+      SELECT 
+        n.news_id AS id,
+        n.title,
+        n.short_description AS description,
+        n.content_url,
+        n.redirect_url,
+        n.is_featured,
+        n.category,
+        n.is_breaking,
+        n.is_ad,
+        n.tags,
+        n.type_id,
+        n.updated_at,
+
+        COALESCE(v.view_count, 0) AS view_count,
+        COALESCE(l.like_count, 0) AS like_count,
+        COALESCE(c.comment_count, 0) AS comment_count,
+        COALESCE(s.share_count, 0) AS share_count,
+
+        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+
+      FROM news n
+      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+      LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+
+      WHERE n.is_active = true
+        AND n.is_ad = false
+    `;
+
+    // ------------------------------------------
+    // 🔍 Add full fuzzy search across title/desc/tags
+    // ------------------------------------------
+    if (keywords.length > 0) {
+      const searchConditions = keywords.map(word => {
+        params.push(`%${word}%`);
+        const idx = i++;
+
+        return `(
+          LOWER(n.title) ILIKE $${idx} OR 
+          LOWER(n.short_description) ILIKE $${idx} OR
+          LOWER(n.tags) ILIKE $${idx}
+        )`;
+      }).join(" AND ");
+
+      query += ` AND (${searchConditions})`;
+    }
+
+    if (afterTime) {
+      query += ` AND n.created_at > $${i}`;
+      params.push(afterTime);
+      i++;
+    }
+
+    query += ` ORDER BY n.priority_score DESC, n.created_at DESC LIMIT $${i}`;
+    params.push(parsedCount);
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      count: result.rowCount,
+      data: result.rows,
+    });
+
+  } catch (error) {
+    console.error("Search News Error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
 
 
 router.get("/banner", verifyToken, async (req, res) => {
