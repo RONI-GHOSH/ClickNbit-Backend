@@ -142,7 +142,8 @@ app.post("/firebase", async (req, res) => {
     return res.json({
       message: "User authenticated successfully",
       token,
-      user_id: userId
+      user_id: userId,
+      email
     });
 
   } catch (error) {
