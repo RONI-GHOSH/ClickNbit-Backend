@@ -110,7 +110,7 @@ app.post("/firebase", async (req, res) => {
     const picture = decoded.picture || null;
 
     // 2️⃣ Check if user exists in PostgreSQL
-    const existing = await db.query(
+    const existing = await pool.query(
       `SELECT user_id, email FROM users WHERE firebase_uid = $1`,
       [uid]
     );
@@ -119,7 +119,7 @@ app.post("/firebase", async (req, res) => {
 
     // 3️⃣ If NEW USER → insert
     if (existing.rows.length === 0) {
-      const insert = await db.query(
+      const insert = await pool.query(
         `INSERT INTO users (firebase_uid, email, name, profile_image_url)
          VALUES ($1, $2, $3, $4)
          RETURNING user_id`,
