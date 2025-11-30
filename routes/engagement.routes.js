@@ -395,5 +395,33 @@ router.post("/view", verifyToken, async (req, res) => {
   }
 });
 
+router.post("/click", verifyToken, async (req, res) => {
+  try {
+    const { id, is_ad, device_type } = req.body;
+    const user_id = req.user.id;
+
+    if (id === undefined || is_ad === undefined) {
+      return res.status(400).json({ error: "id and is_ad are required" });
+    }
+
+    const query = `
+      INSERT INTO clicks (id, is_ad, device_type, user_id)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *;
+    `;
+
+    const values = [id, is_ad, device_type || null, user_id];
+
+    const result = await pool.query(query, values);
+
+    res.status(201).json({
+      message: "Click recorded",
+      click: result.rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 module.exports = router;

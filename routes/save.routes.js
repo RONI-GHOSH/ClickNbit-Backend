@@ -22,20 +22,41 @@ const verifyToken = (req, res, next) => {
 };
 
 router.get("/", verifyToken, async (req, res) => {
-    try {
-        const userId = req.user.id;
+  try {
+    const userId = req.user.id;
 
-            const result = await pool.query(
-                  "SELECT * FROM saves WHERE user_id = $1",
-                        [userId]
-                            );
+    const page = parseInt(req.query.currentpage) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
 
-                                res.json({ success: true, data: result.rows });
-                                  } catch (e) {
-                                      console.error(e);
-                                          res.status(500).json({ success: false, message: "Server error" });
-                                            }
-})
+    const result = await pool.query(
+      "SELECT * FROM saves WHERE user_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+      [userId, limit, offset]
+    );
+
+    const countResult = await pool.query(
+      "SELECT COUNT(*) FROM saves WHERE user_id = $1",
+      [userId]
+    );
+
+    const total = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 router.get("/full", verifyToken, async (req, res) => {
   try {
@@ -77,7 +98,6 @@ router.get("/full", verifyToken, async (req, res) => {
 
     const savedNews = (await pool.query(savedNewsQuery, [userId])).rows;
 
-
     // 2. GET ALL SAVED ADS FOR USER
     const savedAdsQuery = `
       SELECT 
@@ -113,26 +133,25 @@ router.get("/full", verifyToken, async (req, res) => {
 
     const savedAds = (await pool.query(savedAdsQuery, [userId])).rows;
 
-
     // 3. MERGE BOTH RESULTS
     const finalSavedList = [...savedNews, ...savedAds];
 
     res.json({ success: true, data: finalSavedList });
-
   } catch (e) {
     console.error(e);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-
 router.post("/", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { is_ad , id } = req.body;
+    const { is_ad, id } = req.body;
 
-    if ( !id || is_ad==null ) {
-      return res.status(400).json({ success: false, message: "is_ad and id both required" });
+    if (!id || is_ad == null) {
+      return res
+        .status(400)
+        .json({ success: false, message: "is_ad and id both required" });
     }
 
     const result = await pool.query(
@@ -151,10 +170,13 @@ router.post("/", verifyToken, async (req, res) => {
 
 router.delete("/", verifyToken, async (req, res) => {
   try {
-    const { id , is_ad } = req.query;
+    const { id, is_ad } = req.query;
     const userId = req.user.id;
 
-    await pool.query("DELETE FROM saves WHERE id = $1 AND is_ad = $2 and user_id = $3", [id,is_ad,userId]);
+    await pool.query(
+      "DELETE FROM saves WHERE id = $1 AND is_ad = $2 and user_id = $3",
+      [id, is_ad, userId]
+    );
 
     res.json({ success: true, message: "Saved post deleted." });
   } catch (e) {
