@@ -5,7 +5,7 @@ const db = require('../config/db');
 
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ success: false, message: 'Access denied. No token provided.' });
   }
@@ -20,18 +20,18 @@ const verifyToken = (req, res, next) => {
 };
 
 router.get("/", verifyToken, async (req, res) => {
-    try {
-        const user= req.user;
+  try {
+    const user = req.user;
 
-        const result= await db.query(
-            `SELECT * FROM users where user_id = $1`,
-            [user.id]
-        )
-        res.json(result.rows[0])
-    } catch (error) {
-        console.error('Profile fetch error:', error);
-        res.status(500).json({ success: false, message: 'Server error' });
-    }
+    const result = await db.query(
+      `SELECT * FROM users where user_id = $1`,
+      [user.id]
+    )
+    res.json(result.rows[0])
+  } catch (error) {
+    console.error('Profile fetch error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 })
 
 router.post('/', verifyToken, async (req, res) => {
@@ -242,6 +242,7 @@ router.get("/completeness", verifyToken, async (req, res) => {
 });
 
 // POST or UPDATE FCM token
+// POST or UPDATE FCM token
 router.post("/fcm", verifyToken, async (req, res) => {
   const userId = req.user.id;
   const { fcm_token } = req.body;
@@ -251,37 +252,20 @@ router.post("/fcm", verifyToken, async (req, res) => {
   }
 
   try {
-    // If this token already exists → update user_id
-    const updateQuery = `
-      UPDATE fcm_tokens
-      SET user_id = $1
-      WHERE fcm_token = $2
-      RETURNING *;
-    `;
-
-    const updateResult = await db.query(updateQuery, [userId, fcm_token]);
-
-    if (updateResult.rowCount > 0) {
-      return res.json({
-        message: "FCM token updated successfully",
-        data: updateResult.rows[0]
-      });
-    }
-
-    // Insert new FCM token
-    const insertQuery = `
+    // Insert or update based on user_id
+    const query = `
       INSERT INTO fcm_tokens (user_id, fcm_token)
       VALUES ($1, $2)
-      ON CONFLICT (fcm_token)
-      DO UPDATE SET user_id = EXCLUDED.user_id
+      ON CONFLICT (user_id)
+      DO UPDATE SET fcm_token = EXCLUDED.fcm_token
       RETURNING *;
     `;
 
-    const insertResult = await db.query(insertQuery, [userId, fcm_token]);
+    const result = await db.query(query, [userId, fcm_token]);
 
     return res.json({
-      message: "FCM token saved successfully",
-      data: insertResult.rows[0]
+      message: "FCM token updated successfully",
+      data: result.rows[0],
     });
 
   } catch (err) {
@@ -289,6 +273,7 @@ router.post("/fcm", verifyToken, async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 });
+
 
 
 
