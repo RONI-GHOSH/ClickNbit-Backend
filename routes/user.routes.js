@@ -242,7 +242,6 @@ router.get("/completeness", verifyToken, async (req, res) => {
 });
 
 // POST or UPDATE FCM token
-// POST or UPDATE FCM token
 router.post("/fcm", verifyToken, async (req, res) => {
   const userId = req.user.id;
   const { fcm_token } = req.body;

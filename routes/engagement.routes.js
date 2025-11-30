@@ -279,6 +279,62 @@ router.post("/share", verifyToken, async (req, res) => {
   }
 });
 
+// router.post("/view", verifyToken, async (req, res) => {
+//   try {
+//     const user = req.user;
+//     const { id, is_ad, duration_seconds = 0, device_type, location } = req.body;
+
+//     if (!id || typeof is_ad === "undefined" || !device_type) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "id, is_ad and device_type are required",
+//       });
+//     }
+
+//     const idColumn = is_ad ? "ad_id" : "news_id";
+
+//     let geoPoint = null;
+//     if (location && location.latitude && location.longitude) {
+//       geoPoint = `POINT(${location.longitude} ${location.latitude})`;
+//     }
+
+//     const query = `
+//       INSERT INTO views (
+//         ${idColumn},
+//         user_id,
+//         duration_seconds,
+//         device_type,
+//         location,
+//         is_ad
+//       )
+//       VALUES (
+//         $1, $2, $3, $4,
+//         ${geoPoint ? `ST_GeogFromText($5)` : `NULL`},
+//         $6
+//       )
+//       RETURNING *
+//     `;
+
+//     const params = geoPoint
+//       ? [id, user.id, duration_seconds, device_type, geoPoint, is_ad]
+//       : [id, user.id, duration_seconds, device_type, is_ad];
+
+//     const result = await pool.query(query, params);
+
+//     return res.status(201).json({
+//       success: true,
+//       message: "View recorded",
+//       data: result.rows[0],
+//     });
+
+//   } catch (error) {
+//     console.error("View API error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// });
 router.post("/view", verifyToken, async (req, res) => {
   try {
     const user = req.user;
@@ -293,9 +349,12 @@ router.post("/view", verifyToken, async (req, res) => {
 
     const idColumn = is_ad ? "ad_id" : "news_id";
 
-    let geoPoint = null;
-    if (location && location.latitude && location.longitude) {
-      geoPoint = `POINT(${location.longitude} ${location.latitude})`;
+    let lat = null;
+    let lng = null;
+
+    if (location?.latitude && location?.longitude) {
+      lat = location.latitude;
+      lng = location.longitude;
     }
 
     const query = `
@@ -309,14 +368,14 @@ router.post("/view", verifyToken, async (req, res) => {
       )
       VALUES (
         $1, $2, $3, $4,
-        ${geoPoint ? `ST_GeogFromText($5)` : `NULL`},
-        $6
+        ${lat && lng ? `ST_SetSRID(ST_MakePoint($5, $6), 4326)` : `NULL`},
+        $${lat && lng ? 7 : 5}
       )
       RETURNING *
     `;
 
-    const params = geoPoint
-      ? [id, user.id, duration_seconds, device_type, geoPoint, is_ad]
+    const params = lat && lng
+      ? [id, user.id, duration_seconds, device_type, lng, lat, is_ad]
       : [id, user.id, duration_seconds, device_type, is_ad];
 
     const result = await pool.query(query, params);
@@ -335,5 +394,6 @@ router.post("/view", verifyToken, async (req, res) => {
     });
   }
 });
+
 
 module.exports = router;
