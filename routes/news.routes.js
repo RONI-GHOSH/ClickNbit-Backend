@@ -228,7 +228,6 @@ router.get("/details", verifyToken, async (req, res) => {
       success: true,
       data: result.rows[0],
     });
-
   } catch (err) {
     console.error("Details API error:", err);
     res.status(500).json({
@@ -417,20 +416,19 @@ router.get("/public", async (req, res) => {
       return `${Math.floor(diff / 86400)} Days Ago`;
     };
 
-    const formatted = result.rows.map(news => ({
+    const formatted = result.rows.map((news) => ({
       imageUrl: news.image_url || "https://picsum.photos/seed/default/800/600",
       readTime: calculateReadTime(news.subtitle || news.title),
       timeAgo: timeAgo(news.created_at),
       title: news.title,
-      subtitle: news.subtitle
+      subtitle: news.subtitle,
     }));
 
     res.status(200).json({
       success: true,
       count: formatted.length,
-      data: formatted
+      data: formatted,
     });
-
   } catch (error) {
     console.error("Public news error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -439,10 +437,12 @@ router.get("/public", async (req, res) => {
 
 router.get("/search-news", verifyToken, async (req, res) => {
   try {
-    const { q = "", count = 20, afterTime } = req.query;
+    const { q = "", count = 20, afterTime, category = null } = req.query;
 
     if (!q || q.trim() === "") {
-      return res.status(400).json({ success: false, message: "Search query required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Search query required" });
     }
 
     const parsedCount = parseInt(count) || 20;
@@ -452,7 +452,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
     const keywords = q
       .toLowerCase()
       .split(/\s+/)
-      .filter(k => k.length > 1);
+      .filter((k) => k.length > 1);
 
     const params = [userId];
     let i = 2;
@@ -496,16 +496,21 @@ router.get("/search-news", verifyToken, async (req, res) => {
     // 🔍 Add full fuzzy search across title/desc/tags
     // ------------------------------------------
     if (keywords.length > 0) {
-      const searchConditions = keywords.map(word => {
-        params.push(`%${word}%`);
-        const idx = i++;
+      const searchConditions = keywords
+        .map((word) => {
+          params.push(`%${word}%`);
+          const idx = i++;
 
-        return `(
-          LOWER(n.title) ILIKE $${idx} OR 
-          LOWER(n.short_description) ILIKE $${idx} OR
-          LOWER(n.tags) ILIKE $${idx}
-        )`;
-      }).join(" AND ");
+          return `(
+            LOWER(n.title) ILIKE $${idx} OR 
+            LOWER(n.short_description) ILIKE $${idx} OR
+            EXISTS (
+              SELECT 1 FROM unnest(n.tags) AS t
+              WHERE LOWER(t) ILIKE $${idx}
+            )
+          )`;
+        })
+        .join(" AND ");
 
       query += ` AND (${searchConditions})`;
     }
@@ -513,6 +518,12 @@ router.get("/search-news", verifyToken, async (req, res) => {
     if (afterTime) {
       query += ` AND n.created_at > $${i}`;
       params.push(afterTime);
+      i++;
+    }
+
+    if (category) {
+      query += ` AND n.category = $${i}`;
+      params.push(category);
       i++;
     }
 
@@ -526,15 +537,11 @@ router.get("/search-news", verifyToken, async (req, res) => {
       count: result.rowCount,
       data: result.rows,
     });
-
   } catch (error) {
     console.error("Search News Error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
-
-
 
 router.get("/banner", verifyToken, async (req, res) => {
   try {
@@ -844,7 +851,6 @@ router.get("/feed", verifyToken, async (req, res) => {
       ads: adsRes.rows,
       data: finalData,
     });
-
   } catch (err) {
     console.error("Feed API error:", err);
     res.status(500).json({ success: false, message: "Server error" });
@@ -858,7 +864,7 @@ function mergeNewsWithAds(news, ads) {
   const interval = Math.floor(news.length / (ads.length + 1));
   let insertIndex = interval;
 
-  ads.forEach(ad => {
+  ads.forEach((ad) => {
     if (insertIndex > result.length) {
       result.push(ad);
     } else {
@@ -869,8 +875,6 @@ function mergeNewsWithAds(news, ads) {
 
   return result;
 }
-
-
 
 // Get news list with metrics
 router.get("/", async (req, res) => {
