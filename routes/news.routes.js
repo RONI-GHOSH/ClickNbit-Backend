@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 const pool = require("../config/db");
+const admin = require("../config/firebaseAdmin");
 
 // Valid metrics for sorting
 const VALID_METRICS = [
@@ -118,10 +119,36 @@ router.post("/", verifyAdmin, async (req, res) => {
       ]
     );
 
+    const newsItem = result.rows[0];
+
+    // 🔔 SEND NOTIFICATION TO TOPIC 'all'
+    // Only send if the news item is marked as active
+    if (is_active) {
+      try {
+        const message = {
+          topic: 'all',
+          notification: {
+            title: title,
+            body: short_description || "Check out the latest update!",
+          },
+          data: {
+            newsId: newsItem.news_id.toString(),
+            type: 'news_item'
+          }
+        };
+
+        await admin.messaging().send(message);
+        console.log(`Notification sent to topic 'all' for news: "${title}"`);
+      } catch (notificationError) {
+        // Log error but do NOT fail the request. The news was created successfully.
+        console.error("Failed to send FCM notification:", notificationError);
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: "News item created successfully",
-      data: result.rows[0],
+      data: newsItem,
     });
   } catch (error) {
     console.error("News creation error:", error);
@@ -224,9 +251,21 @@ router.get("/details", verifyToken, async (req, res) => {
       });
     }
 
+    const astads = await db.query(
+      `SELECT 
+        a.ad_id AS id,
+        a.content_url,
+        a.redirect_url
+      FROM advertisements a
+      WHERE a.is_active = true AND a.format_id = 1
+      ORDER BY RANDOM()
+      LIMIT 1
+    `);
+
     res.status(200).json({
       success: true,
       data: result.rows[0],
+      astonAd: astads.rows[0],
     });
   } catch (err) {
     console.error("Details API error:", err);
@@ -342,7 +381,7 @@ router.get("/top10", verifyToken, async (req, res) => {
         LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
         LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
         LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
-        WHERE a.is_active = true
+        WHERE a.is_active = true AND a.format_id = 2
         ORDER BY a.created_at DESC
         LIMIT $1
       `;
@@ -352,6 +391,17 @@ router.get("/top10", verifyToken, async (req, res) => {
 
     const finalData = mergeNewsWithAds(newsResult.rows, adsResult);
 
+    const astads = await db.query(
+      `SELECT 
+        a.ad_id AS id,
+        a.content_url,
+        a.redirect_url
+      FROM advertisements a
+      WHERE a.is_active = true AND a.format_id = 1
+      ORDER BY RANDOM()
+      LIMIT $1`, [fixedLimit]
+    );
+
     res.status(200).json({
       success: true,
       limit: fixedLimit,
@@ -359,6 +409,7 @@ router.get("/top10", verifyToken, async (req, res) => {
       afterTime: afterTime || null,
       categories,
       totalReturned: finalData.length,
+      astonAd: astads.rows,
       data: finalData,
     });
   } catch (error) {
@@ -448,17 +499,13 @@ router.get("/search-news", verifyToken, async (req, res) => {
     const parsedCount = parseInt(count) || 20;
     const userId = req.user?.id || null;
 
-    // Split keywords (e.g. "sports cricket worldcup")
-    const keywords = q
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((k) => k.length > 1);
+    const searchTerms = q.trim().normalize("NFC").toLowerCase().split(/\s+/).filter(k => k.length > 0);
 
     const params = [userId];
     let i = 2;
 
     let query = `
-      SELECT 
+      SELECT
         n.news_id AS id,
         n.title,
         n.short_description AS description,
@@ -471,6 +518,8 @@ router.get("/search-news", verifyToken, async (req, res) => {
         n.tags,
         n.type_id,
         n.updated_at,
+        n.created_at,
+        n.priority_score,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -478,42 +527,24 @@ router.get("/search-news", verifyToken, async (req, res) => {
         COALESCE(s.share_count, 0) AS share_count,
 
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+        CASE WHEN sv.save_id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM news n
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+
       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
-      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+
+      LEFT JOIN saves sv 
+        ON sv.id = n.news_id 
+        AND sv.user_id = $1 
+        AND sv.is_ad = false
 
       WHERE n.is_active = true
         AND n.is_ad = false
     `;
-
-    // ------------------------------------------
-    // 🔍 Add full fuzzy search across title/desc/tags
-    // ------------------------------------------
-    if (keywords.length > 0) {
-      const searchConditions = keywords
-        .map((word) => {
-          params.push(`%${word}%`);
-          const idx = i++;
-
-          return `(
-            LOWER(n.title) ILIKE $${idx} OR 
-            LOWER(n.short_description) ILIKE $${idx} OR
-            EXISTS (
-              SELECT 1 FROM unnest(n.tags) AS t
-              WHERE LOWER(t) ILIKE $${idx}
-            )
-          )`;
-        })
-        .join(" AND ");
-
-      query += ` AND (${searchConditions})`;
-    }
 
     if (afterTime) {
       query += ` AND n.created_at > $${i}`;
@@ -522,26 +553,73 @@ router.get("/search-news", verifyToken, async (req, res) => {
     }
 
     if (category) {
-      query += ` AND n.category = $${i}`;
-      params.push(category);
+      query += ` AND LOWER(n.category) = LOWER($${i})`;
+      params.push(category.trim());
       i++;
     }
 
-    query += ` ORDER BY n.priority_score DESC, n.created_at DESC LIMIT $${i}`;
-    params.push(parsedCount);
+    query += ` ORDER BY n.created_at DESC LIMIT 1000`; 
 
     const result = await pool.query(query, params);
+    const allNews = result.rows;
+
+    const filteredResults = allNews.map((news) => {
+      let score = 0;
+
+      const title = news.title ? news.title.normalize("NFC").toLowerCase() : "";
+      const desc = news.description ? news.description.normalize("NFC").toLowerCase() : "";
+      const tags = Array.isArray(news.tags) 
+        ? news.tags.map(t => t.normalize("NFC").toLowerCase()).join(" ") 
+        : "";
+
+      let isMatch = true;
+
+      for (const term of searchTerms) {
+        let termFound = false;
+
+        if (title.includes(term)) {
+          score += 5;
+          termFound = true;
+        }
+        if (desc.includes(term)) {
+          score += 3;
+          termFound = true;
+        }
+        if (tags.includes(term)) {
+          score += 2;
+          termFound = true;
+        }
+
+        if (!termFound) {
+          isMatch = false;
+          break; 
+        }
+      }
+
+      return isMatch ? { ...news, searchScore: score } : null;
+    })
+    .filter(item => item !== null); 
+
+    filteredResults.sort((a, b) => {
+      if (b.searchScore !== a.searchScore) return b.searchScore - a.searchScore;
+      if (b.priority_score !== a.priority_score) return b.priority_score - a.priority_score;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+    const finalData = filteredResults.slice(0, parsedCount);
 
     res.json({
       success: true,
-      count: result.rowCount,
-      data: result.rows,
+      count: finalData.length,
+      data: finalData,
     });
+
   } catch (error) {
     console.error("Search News Error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 router.get("/banner", verifyToken, async (req, res) => {
   try {
@@ -636,7 +714,7 @@ router.get("/banner", verifyToken, async (req, res) => {
       LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
       LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
 
-      WHERE a.is_active = true
+      WHERE a.is_active = true AND a.format_id = 2
       ORDER BY priority_score DESC
       LIMIT $1
     `;
@@ -678,11 +756,14 @@ router.get("/feed", verifyToken, async (req, res) => {
     const parsedAds = parseInt(ads) || 1;
     const page = parseInt(currentPage) || 1;
 
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
+    const hasLocation = !isNaN(userLat) && !isNaN(userLng);
+
     const newsOffset = (page - 1) * parsedLimit;
     const adsOffset = (page - 1) * parsedAds;
 
     let prefJson = null;
-
     const prefRes = await db.query(
       `SELECT 
         clicked_news_category,
@@ -751,30 +832,55 @@ router.get("/feed", verifyToken, async (req, res) => {
     }
 
     if (sort === "default") {
+      
+      let locationScoreSql = "0";
+      if (hasLocation) {
+        locationScoreSql = `
+          (CASE 
+            WHEN n.geo_point IS NOT NULL THEN
+              1 / (1 + (ST_DistanceSphere(
+                n.geo_point::geometry,
+                ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+              ) / 8000))
+            ELSE 0
+          END * 10)
+        `;
+      }
+
       if (prefJson) {
         newsQuery += `
           ORDER BY (
+            ${locationScoreSql} +
             (CASE 
               WHEN n.category IS NOT NULL 
-              THEN COALESCE((($${idx}::jsonb->'clicked_news_category'->>n.category)::int), 0) * 7
+              THEN COALESCE((($${idx}::jsonb->'clicked_news_category'->>n.category)::int), 0) * 0.1
               ELSE 0
             END) +
             (CASE 
               WHEN n.category IS NOT NULL 
-              THEN COALESCE((($${idx}::jsonb->'skipped_news_category'->>n.category)::int), 0) * 5
+              THEN COALESCE((($${idx}::jsonb->'skipped_news_category'->>n.category)::int), 0) * 0.5
               ELSE 0
             END) +
             (CASE 
               WHEN ($${idx}::jsonb->>'preferred_news_type') = n.area_type 
               THEN 2 ELSE 0
             END) +
-            ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.05)
+            ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
           ) DESC
         `;
         params.push(prefJson);
         idx++;
       } else {
-        newsQuery += ` ORDER BY n.created_at DESC `;
+        if (hasLocation) {
+          newsQuery += ` 
+            ORDER BY (
+              ${locationScoreSql} + 
+              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
+            ) DESC 
+          `;
+        } else {
+          newsQuery += ` ORDER BY n.created_at DESC `;
+        }
       }
     }
 
@@ -813,10 +919,10 @@ router.get("/feed", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $1
       LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
-      WHERE a.is_active = true
+      WHERE a.is_active = true AND a.format_id = 2
     `;
 
-    if (lat && lng) {
+    if (hasLocation) {
       adQuery += `
         ORDER BY
           (priority_score * 0.6) +
@@ -824,10 +930,10 @@ router.get("/feed", verifyToken, async (req, res) => {
             WHEN geo_point IS NOT NULL THEN
               1 / (1 + (ST_DistanceSphere(
                 geo_point::geometry,
-                ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)
+                ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
               ) / 8000))
             ELSE 0
-          END * 0.4)
+          END * 10)
         DESC
       `;
     } else {
@@ -840,6 +946,17 @@ router.get("/feed", verifyToken, async (req, res) => {
 
     const finalData = mergeNewsWithAds(newsRes.rows, adsRes.rows);
 
+    const astads = await db.query(
+      `SELECT 
+        a.ad_id AS id,
+        a.content_url,
+        a.redirect_url
+      FROM advertisements a
+      WHERE a.is_active = true AND a.format_id = 1
+      ORDER BY RANDOM()
+      LIMIT $1`, [limit]
+    );
+
     res.status(200).json({
       success: true,
       page,
@@ -849,6 +966,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       ads_count: adsRes.rows.length,
       news: newsRes.rows,
       ads: adsRes.rows,
+      astonAds: astads.rows,
       data: finalData,
     });
   } catch (err) {

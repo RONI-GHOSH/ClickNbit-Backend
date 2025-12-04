@@ -93,14 +93,15 @@ app.post("/verify", async (req, res) => {
 
 // POST verify firebase token
 app.post("/firebase", async (req, res) => {
-  const { idToken } = req.body;
+  // 1️⃣ We now expect fcmToken in the body as well
+  const { idToken, fcmToken } = req.body;
 
   if (!idToken) {
     return res.status(400).json({ error: "ID token is required" });
   }
 
   try {
-    // 1️⃣ Verify ID TOKEN using Firebase Admin
+    // 2️⃣ Verify ID TOKEN using Firebase Admin
     const decoded = await admin.auth().verifyIdToken(idToken);
     const uid = decoded.uid;
 
@@ -109,7 +110,22 @@ app.post("/firebase", async (req, res) => {
     const name = decoded.name || null;
     const picture = decoded.picture || null;
 
-    // 2️⃣ Check if user exists in PostgreSQL
+    // 3️⃣ SUBSCRIBE TO TOPIC 'all'
+    // Topics are automatically "created" when the first user subscribes.
+    if (fcmToken) {
+      try {
+        await admin.messaging().subscribeToTopic(fcmToken, "all");
+        console.log(`Successfully subscribed ${uid} (device) to topic: all`);
+      } catch (subError) {
+        // We log the error but don't fail the authentication request
+        // simply because notification subscription failed
+        console.error("Error subscribing to topic:", subError);
+      }
+    } else {
+      console.warn("No FCM Token provided; skipping topic subscription.");
+    }
+
+    // 4️⃣ Check if user exists in PostgreSQL
     const existing = await pool.query(
       `SELECT user_id, email FROM users WHERE firebase_uid = $1`,
       [uid]
@@ -117,7 +133,7 @@ app.post("/firebase", async (req, res) => {
 
     let userId;
 
-    // 3️⃣ If NEW USER → insert
+    // 5️⃣ If NEW USER → insert
     if (existing.rows.length === 0) {
       const insert = await pool.query(
         `INSERT INTO users (firebase_uid, email, name, profile_image_url)
@@ -132,7 +148,7 @@ app.post("/firebase", async (req, res) => {
       userId = existing.rows[0].user_id;
     }
 
-    // 4️⃣ Generate JWT token
+    // 6️⃣ Generate JWT token
     const token = jwt.sign(
       { id: userId },
       process.env.JWT_SECRET,
@@ -140,7 +156,7 @@ app.post("/firebase", async (req, res) => {
     );
 
     return res.json({
-      message: "User authenticated successfully",
+      message: "User authenticated and subscribed to notifications",
       token,
       user_id: userId,
       email
@@ -151,6 +167,5 @@ app.post("/firebase", async (req, res) => {
     return res.status(401).json({ error: "Invalid or expired Firebase ID Token" });
   }
 });
-
 
 module.exports = app;
