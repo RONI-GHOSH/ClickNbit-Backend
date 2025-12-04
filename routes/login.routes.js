@@ -94,7 +94,7 @@ app.post("/verify", async (req, res) => {
 // POST verify firebase token
 app.post("/firebase", async (req, res) => {
   // 1️⃣ We now expect fcmToken in the body as well
-  const { idToken, fcmToken } = req.body;
+  const { idToken } = req.body;
 
   if (!idToken) {
     return res.status(400).json({ error: "ID token is required" });
@@ -109,21 +109,6 @@ app.post("/firebase", async (req, res) => {
     const email = decoded.email || null;
     const name = decoded.name || null;
     const picture = decoded.picture || null;
-
-    // 3️⃣ SUBSCRIBE TO TOPIC 'all'
-    // Topics are automatically "created" when the first user subscribes.
-    if (fcmToken) {
-      try {
-        await admin.messaging().subscribeToTopic(fcmToken, "all");
-        console.log(`Successfully subscribed ${uid} (device) to topic: all`);
-      } catch (subError) {
-        // We log the error but don't fail the authentication request
-        // simply because notification subscription failed
-        console.error("Error subscribing to topic:", subError);
-      }
-    } else {
-      console.warn("No FCM Token provided; skipping topic subscription.");
-    }
 
     // 4️⃣ Check if user exists in PostgreSQL
     const existing = await pool.query(
@@ -156,7 +141,7 @@ app.post("/firebase", async (req, res) => {
     );
 
     return res.json({
-      message: "User authenticated and subscribed to notifications",
+      message: "User authenticated successfully",
       token,
       user_id: userId,
       email

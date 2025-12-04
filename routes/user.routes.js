@@ -262,6 +262,19 @@ router.post("/fcm", verifyToken, async (req, res) => {
 
     const result = await db.query(query, [userId, fcm_token]);
 
+    if (fcm_token) {
+          try {
+            await admin.messaging().subscribeToTopic(fcm_token, "all");
+            console.log(`Successfully subscribed ${userId} (device) to topic: all`);
+          } catch (subError) {
+            // We log the error but don't fail the authentication request
+            // simply because notification subscription failed
+            console.error("Error subscribing to topic:", subError);
+          }
+        } else {
+          console.warn("No FCM Token provided; skipping topic subscription.");
+        }
+
     return res.json({
       message: "FCM token updated successfully",
       data: result.rows[0],
