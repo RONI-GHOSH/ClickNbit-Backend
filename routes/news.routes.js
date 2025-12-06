@@ -51,6 +51,48 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+router.post("/send-notification", verifyAdmin, async (req, res) => {
+  try {
+    const { news_id, title, short_description } = req.body;
+    const contentRes = await db.query(
+      `SELECT content_url FROM news WHERE news_id = $1 LIMIT 1`,
+      [news_id]
+    );
+    const content_url = contentRes.rows[0]?.content_url;
+    try {
+      const message = {
+        topic: "all",
+        notification: {
+          title: title,
+          body: short_description || "Check out the latest update!",
+          image: content_url || undefined,
+        },
+        android: {
+          notification: {
+            imageUrl: content_url || undefined,
+            priority: "high",
+          },
+        },
+        data: {
+          news_id: news_id.toString(),
+          is_reel: "true",
+        },
+      };
+
+      await admin.messaging().send(message);
+      console.log(`Notification sent to topic 'all' for news: "${title}"`);
+    } catch (notificationError) {
+      console.error("Failed to send FCM notification:", notificationError);
+    }
+    res
+      .status(200)
+      .json({ success: true, message: "Notification sent successfully" });
+  } catch (error) {
+    console.error("Notification sending error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // Add new news item (admin only)
 router.post("/", verifyAdmin, async (req, res) => {
   try {
@@ -120,30 +162,6 @@ router.post("/", verifyAdmin, async (req, res) => {
     );
 
     const newsItem = result.rows[0];
-
-    // 🔔 SEND NOTIFICATION TO TOPIC 'all'
-    // Only send if the news item is marked as active
-    if (is_active) {
-      try {
-        const message = {
-          topic: 'all',
-          notification: {
-            title: title,
-            body: short_description || "Check out the latest update!",
-          },
-          data: {
-            newsId: newsItem.news_id.toString(),
-            type: 'news_item'
-          }
-        };
-
-        await admin.messaging().send(message);
-        console.log(`Notification sent to topic 'all' for news: "${title}"`);
-      } catch (notificationError) {
-        // Log error but do NOT fail the request. The news was created successfully.
-        console.error("Failed to send FCM notification:", notificationError);
-      }
-    }
 
     res.status(201).json({
       success: true,
@@ -260,7 +278,8 @@ router.get("/details", verifyToken, async (req, res) => {
       WHERE a.is_active = true AND a.format_id = 1
       ORDER BY RANDOM()
       LIMIT 1
-    `);
+    `
+    );
 
     res.status(200).json({
       success: true,
@@ -399,7 +418,8 @@ router.get("/top10", verifyToken, async (req, res) => {
       FROM advertisements a
       WHERE a.is_active = true AND a.format_id = 1
       ORDER BY RANDOM()
-      LIMIT $1`, [fixedLimit]
+      LIMIT $1`,
+      [fixedLimit]
     );
 
     res.status(200).json({
@@ -499,7 +519,12 @@ router.get("/search-news", verifyToken, async (req, res) => {
     const parsedCount = parseInt(count) || 20;
     const userId = req.user?.id || null;
 
-    const searchTerms = q.trim().normalize("NFC").toLowerCase().split(/\s+/).filter(k => k.length > 0);
+    const searchTerms = q
+      .trim()
+      .normalize("NFC")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((k) => k.length > 0);
 
     const params = [userId];
     let i = 2;
@@ -558,51 +583,57 @@ router.get("/search-news", verifyToken, async (req, res) => {
       i++;
     }
 
-    query += ` ORDER BY n.created_at DESC LIMIT 1000`; 
+    query += ` ORDER BY n.created_at DESC LIMIT 1000`;
 
     const result = await pool.query(query, params);
     const allNews = result.rows;
 
-    const filteredResults = allNews.map((news) => {
-      let score = 0;
+    const filteredResults = allNews
+      .map((news) => {
+        let score = 0;
 
-      const title = news.title ? news.title.normalize("NFC").toLowerCase() : "";
-      const desc = news.description ? news.description.normalize("NFC").toLowerCase() : "";
-      const tags = Array.isArray(news.tags) 
-        ? news.tags.map(t => t.normalize("NFC").toLowerCase()).join(" ") 
-        : "";
+        const title = news.title
+          ? news.title.normalize("NFC").toLowerCase()
+          : "";
+        const desc = news.description
+          ? news.description.normalize("NFC").toLowerCase()
+          : "";
+        const tags = Array.isArray(news.tags)
+          ? news.tags.map((t) => t.normalize("NFC").toLowerCase()).join(" ")
+          : "";
 
-      let isMatch = true;
+        let isMatch = true;
 
-      for (const term of searchTerms) {
-        let termFound = false;
+        for (const term of searchTerms) {
+          let termFound = false;
 
-        if (title.includes(term)) {
-          score += 5;
-          termFound = true;
+          if (title.includes(term)) {
+            score += 5;
+            termFound = true;
+          }
+          if (desc.includes(term)) {
+            score += 3;
+            termFound = true;
+          }
+          if (tags.includes(term)) {
+            score += 2;
+            termFound = true;
+          }
+
+          if (!termFound) {
+            isMatch = false;
+            break;
+          }
         }
-        if (desc.includes(term)) {
-          score += 3;
-          termFound = true;
-        }
-        if (tags.includes(term)) {
-          score += 2;
-          termFound = true;
-        }
 
-        if (!termFound) {
-          isMatch = false;
-          break; 
-        }
-      }
-
-      return isMatch ? { ...news, searchScore: score } : null;
-    })
-    .filter(item => item !== null); 
+        return isMatch ? { ...news, searchScore: score } : null;
+      })
+      .filter((item) => item !== null);
 
     filteredResults.sort((a, b) => {
       if (b.searchScore !== a.searchScore) return b.searchScore - a.searchScore;
-      if (b.priority_score !== a.priority_score) return b.priority_score - a.priority_score;
+      if (b.priority_score !== a.priority_score)
+        return b.priority_score - a.priority_score;
       return new Date(b.created_at) - new Date(a.created_at);
     });
 
@@ -613,13 +644,11 @@ router.get("/search-news", verifyToken, async (req, res) => {
       count: finalData.length,
       data: finalData,
     });
-
   } catch (error) {
     console.error("Search News Error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 
 router.get("/banner", verifyToken, async (req, res) => {
   try {
@@ -832,7 +861,6 @@ router.get("/feed", verifyToken, async (req, res) => {
     }
 
     if (sort === "default") {
-      
       let locationScoreSql = "0";
       if (hasLocation) {
         locationScoreSql = `
@@ -954,7 +982,8 @@ router.get("/feed", verifyToken, async (req, res) => {
       FROM advertisements a
       WHERE a.is_active = true AND a.format_id = 1
       ORDER BY RANDOM()
-      LIMIT $1`, [limit]
+      LIMIT $1`,
+      [limit]
     );
 
     res.status(200).json({
