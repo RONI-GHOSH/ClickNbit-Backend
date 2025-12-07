@@ -35,7 +35,63 @@ router.get("/", verifyToken, async (req, res) => {
   }
 })
 
-router.post('/', verifyToken, async (req, res) => {
+// router.post('/', verifyToken, async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+
+//     const existingProfile = await db.query(
+//       "SELECT * FROM users WHERE user_id = $1",
+//       [userId]
+//     );
+
+//     if (existingProfile.rows.length === 0) {
+//       return res.status(400).json({ error: "Profile does not exist for this user" });
+//     }
+
+//     const { name, phone, email, profile_photo_url, city, district, state, country, age, location, interests } = req.body;
+
+//     const result = await db.query(
+//       `UPDATE users SET
+//         name = $2,
+//         phone = COALESCE(phone, $3),
+//         email = COALESCE(email, $4),
+//         profile_image_url = $5,
+//         city = $6,
+//         district = $7,
+//         state = $8,
+//         country = $9,
+//         age = $10,
+//         location = $11,
+//         interests = $12
+//       WHERE user_id = $1
+//       RETURNING *`,
+//       [
+//         userId,
+//         name,
+//         phone,
+//         email,
+//         profile_photo_url,
+//         city,
+//         district,
+//         state,
+//         country,
+//         age,
+//         location,
+//         interests
+//       ]
+//     );
+
+//     return res.status(200).json({
+//       message: "Profile updated successfully",
+//       res: result.rows[0]
+//     });
+
+//   } catch (e) {
+//     console.error(e);
+//     res.status(500).json({ error: e.message });
+//   }
+// });
+router.post("/", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
@@ -44,67 +100,9 @@ router.post('/', verifyToken, async (req, res) => {
       [userId]
     );
 
-    if (existingProfile.rows.length === 0) {
-      return res.status(400).json({ error: "Profile does not exist for this user" });
+    if (existingProfile.rows.length != 0) {
+      return res.status(400).json({ error: "Profile already exist for this user" });
     }
-
-    const { name, phone, email, profile_photo_url, city, district, state, country, age, location, interests } = req.body;
-
-    const result = await db.query(
-      `UPDATE users SET
-        name = $2,
-        phone = COALESCE(phone, $3),
-        email = COALESCE(email, $4),
-        profile_image_url = $5,
-        city = $6,
-        district = $7,
-        state = $8,
-        country = $9,
-        age = $10,
-        location = $11,
-        interests = $12
-      WHERE user_id = $1
-      RETURNING *`,
-      [
-        userId,
-        name,
-        phone,
-        email,
-        profile_photo_url,
-        city,
-        district,
-        state,
-        country,
-        age,
-        location,
-        interests
-      ]
-    );
-
-    return res.status(200).json({
-      message: "Profile updated successfully",
-      res: result.rows[0]
-    });
-
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-router.patch("/", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const existingProfile = await db.query(
-      "SELECT * FROM users WHERE user_id = $1",
-      [userId]
-    );
-
-    if (existingProfile.rows.length === 0) {
-      return res.status(400).json({ error: "Profile does not exist for this user" });
-    }
-
 
     const {
       name,
@@ -119,6 +117,166 @@ router.patch("/", verifyToken, async (req, res) => {
       location,
       interests
     } = req.body;
+
+    // Validation: phone or email must be provided
+    if (!phone && !email) {
+      return res.status(400).json({
+        error: "Either phone or email must be provided"
+      });
+    }
+
+    const result = await db.query(
+      `UPDATE users SET
+        name = $2,
+        phone = $3,
+        email = $4,
+        profile_image_url = $5,
+        city = $6,
+        district = $7,
+        state = $8,
+        country = $9,
+        age = $10,
+        location = $11,
+        interests = $12,
+        updated_at = NOW()
+      WHERE user_id = $1
+      RETURNING *`,
+      [
+        userId,
+        name,
+        phone,
+        email,
+        profile_image_url || null,
+        city || null,
+        district || null,
+        state || null,
+        country || null,
+        age || null,
+        location || null,
+        interests || null
+      ]
+    );
+
+    return res.status(200).json({
+      message: "Profile updated successfully",
+      res: result.rows[0]
+    });
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// router.patch("/", verifyToken, async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+
+//     const existingProfile = await db.query(
+//       "SELECT * FROM users WHERE user_id = $1",
+//       [userId]
+//     );
+
+//     if (existingProfile.rows.length === 0) {
+//       return res.status(400).json({ error: "Profile does not exist for this user" });
+//     }
+
+
+//     const {
+//       name,
+//       phone,
+//       email,
+//       profile_image_url,
+//       city,
+//       district,
+//       state,
+//       country,
+//       age,
+//       location,
+//       interests
+//     } = req.body;
+
+//     const result = await db.query(
+//       `UPDATE users SET
+//         name = COALESCE($2, name),
+//         phone = COALESCE($3, phone),
+//         email = COALESCE($4, email),
+//         profile_image_url = COALESCE($5, profile_image_url),
+//         city = COALESCE($6, city),
+//         district = COALESCE($7, district),
+//         state = COALESCE($8, state),
+//         country = COALESCE($9, country),
+//         age = COALESCE($10, age),
+//         location = COALESCE($11, location),
+//         interests = COALESCE($12, interests),
+//         updated_at = NOW()
+//       WHERE user_id = $1
+//       RETURNING *`,
+//       [
+//         userId,
+//         name,
+//         phone,
+//         email,
+//         profile_image_url,
+//         city,
+//         district,
+//         state,
+//         country,
+//         age,
+//         location,
+//         interests
+//       ]
+//     );
+
+//     return res.status(200).json({
+//       message: "Profile updated successfully",
+//       res: result.rows[0]
+//     });
+
+//   } catch (e) {
+//     console.error(e);
+//     res.status(500).json({ error: e.message });
+//   }
+// });
+router.patch("/", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const existingProfile = await db.query(
+      "SELECT * FROM users WHERE user_id = $1",
+      [userId]
+    );
+
+    if (existingProfile.rows.length === 0) {
+      return res.status(400).json({ error: "Profile does not exist for this user" });
+    }
+
+    const {
+      name,
+      phone,
+      email,
+      profile_image_url,
+      city,
+      district,
+      state,
+      country,
+      age,
+      location,
+      interests
+    } = req.body;
+
+    // Validate: At least one of phone/email must exist (existing or body)
+    const existing = existingProfile.rows[0];
+
+    const finalPhone = phone ?? existing.phone;
+    const finalEmail = email ?? existing.email;
+
+    if (!finalPhone && !finalEmail) {
+      return res.status(400).json({
+        error: "At least one contact field (phone or email) must exist"
+      });
+    }
 
     const result = await db.query(
       `UPDATE users SET
