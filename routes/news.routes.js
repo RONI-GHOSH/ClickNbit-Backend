@@ -55,7 +55,7 @@ router.post("/send-notification", verifyAdmin, async (req, res) => {
   try {
     const { news_id, title, short_description } = req.body;
     const contentRes = await db.query(
-      `SELECT content_url FROM news WHERE news_id = $1 LIMIT 1`,
+      `UPDATE news SET is_notified = TRUE WHERE news_id = $1 RETURNING content_url`,
       [news_id]
     );
     const content_url = contentRes.rows[0]?.content_url;
@@ -1084,6 +1084,7 @@ router.get("/", async (req, res) => {
         n.created_at,
         n.type_id,
         n.updated_at,
+        n.is_notified,
         COUNT(DISTINCT v.view_id) AS view_count,
         COUNT(DISTINCT l.like_id) AS like_count,
         COUNT(DISTINCT c.comment_id) AS comment_count
