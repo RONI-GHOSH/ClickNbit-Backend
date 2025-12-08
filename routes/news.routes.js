@@ -53,7 +53,7 @@ const verifyToken = (req, res, next) => {
 
 router.post("/send-notification", verifyAdmin, async (req, res) => {
   try {
-    const { news_id, title, short_description } = req.body;
+    const { news_id, title } = req.body;
     const contentRes = await db.query(
       `UPDATE news SET is_notified = TRUE WHERE news_id = $1 RETURNING content_url`,
       [news_id]
@@ -64,7 +64,6 @@ router.post("/send-notification", verifyAdmin, async (req, res) => {
         topic: "all",
         notification: {
           title: title,
-          body: short_description || "Check out the latest update!",
           image: content_url || undefined,
         },
         android: {
