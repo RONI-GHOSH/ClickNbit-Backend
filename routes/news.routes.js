@@ -96,7 +96,7 @@ router.post("/send-notification", verifyAdmin, async (req, res) => {
     news_id: news_id.toString(),
     is_reel: "true",
     title: title, // Add for fallback
-    body: body || "", // Add for fallback
+    body: "", // Add for fallback
   },
 };
 
