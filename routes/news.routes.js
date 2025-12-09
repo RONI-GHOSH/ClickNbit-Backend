@@ -60,45 +60,24 @@ router.post("/send-notification", verifyAdmin, async (req, res) => {
     );
     const content_url = contentRes.rows[0]?.content_url;
     try {
-      // const message = {
-      //   topic: "all",
-      //   notification: {
-      //     title: title,
-      //     image: content_url || undefined,
-      //   },
-      //   android: {
-      //     notification: {
-      //       imageUrl: content_url || undefined,
-      //       priority: "max",
-      //     },
-      //   },
-      //   data: {
-      //     news_id: news_id.toString(),
-      //     is_reel: "true",
-      //   },
-      // };
       const message = {
-  topic: "all",
-  notification: {
-    title: title,
-    image: content_url || undefined,
-  },
-  android: {
-    notification: {
-      imageUrl: content_url || undefined,
-      priority: "high",
-      icon: "ic_stat_logo_outlined", 
-      channelId: "high_channel", 
-      sound: "notification_sound", 
-    },
-  },
-  data: {
-    news_id: news_id.toString(),
-    is_reel: "true",
-    title: title, // Add for fallback
-    body: "", // Add for fallback
-  },
-};
+        topic: "all",
+        notification: {
+          title: title,
+          image: content_url || undefined,
+        },
+        android: {
+          notification: {
+            imageUrl: content_url || undefined,
+            priority: "max",
+          },
+        },
+        data: {
+          news_id: news_id.toString(),
+          is_reel: "true",
+        },
+      };
+      
 
       await admin.messaging().send(message);
       console.log(`Notification sent to topic 'all' for news: "${title}"`);
