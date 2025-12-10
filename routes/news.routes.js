@@ -88,8 +88,9 @@ router.post("/send-notification", verifyAdmin, async (req, res) => {
             imageUrl: content_url || undefined,
             priority: "high",
             icon: "ic_stat_logo_outlined",
-            channelId: "high_channel",
+            channelId: "high_channel_v2",
             sound: "notification_sound",
+            visibility: "public",
           },
         },
         data: {
