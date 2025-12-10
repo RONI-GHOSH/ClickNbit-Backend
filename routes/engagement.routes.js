@@ -395,6 +395,23 @@ router.post("/view", verifyToken, async (req, res) => {
   }
 });
 
+router.get("/view", verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const query = `
+      SELECT news_id as id FROM views WHERE user_id = $1
+    `;
+    const result = await pool.query(query, [user.id]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("View API error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+}); 
+
 router.post("/click", verifyToken, async (req, res) => {
   try {
     const { id, is_ad, device_type } = req.body;
