@@ -788,7 +788,7 @@ router.get("/banner", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/feed-test", verifyToken, async (req, res) => {
+router.get("/feed-test", async (req, res) => {
   try {
     const {
       type = "all",
@@ -802,7 +802,7 @@ router.get("/feed-test", verifyToken, async (req, res) => {
       currentPage = 1,
     } = req.query;
 
-    const userId = req.user.id;
+    const userId = 10;
     const parsedLimit = parseInt(limit) || 10;
     const parsedAds = parseInt(ads) || 1;
     const page = parseInt(currentPage) || 1;
