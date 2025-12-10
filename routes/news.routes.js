@@ -788,6 +788,331 @@ router.get("/banner", verifyToken, async (req, res) => {
   }
 });
 
+router.get("/feed-test", verifyToken, async (req, res) => {
+  try {
+    const {
+      type = "all",
+      sort = "default",
+      limit = 10,
+      ads = 1,
+      lat,
+      lng,
+      category,
+      afterTime,
+      currentPage = 1,
+    } = req.query;
+
+    const userId = req.user.id;
+    const parsedLimit = parseInt(limit) || 10;
+    const parsedAds = parseInt(ads) || 1;
+    const page = parseInt(currentPage) || 1;
+
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
+    const hasLocation = !isNaN(userLat) && !isNaN(userLng);
+
+    const newsOffset = (page - 1) * parsedLimit;
+    const adsOffset = (page - 1) * parsedAds;
+
+    // Build dynamic location scoring
+    let locationScoreSql = "0";
+    if (hasLocation) {
+      locationScoreSql = `
+        1 / (1 + (ST_DistanceSphere(
+          geo_point::geometry,
+          ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+        ) / 8000)) * 10
+      `;
+    }
+
+    // Single optimized query using UNION ALL and CTEs
+    const params = [userId];
+    let paramIdx = 2;
+
+    // Build WHERE conditions
+    let newsConditions = [];
+    if (type !== "all") {
+      newsConditions.push(`type_id = $${paramIdx}`);
+      params.push(type);
+      paramIdx++;
+    }
+    if (category) {
+      newsConditions.push(`category = $${paramIdx}`);
+      params.push(category);
+      paramIdx++;
+    }
+    if (afterTime) {
+      newsConditions.push(`created_at > $${paramIdx}`);
+      params.push(new Date(afterTime));
+      paramIdx++;
+    }
+
+    const newsWhereClause = newsConditions.length > 0 
+      ? `AND ${newsConditions.join(' AND ')}` 
+      : '';
+
+    // Get user preferences once
+    const prefLimitIdx = paramIdx;
+    const newsLimitIdx = paramIdx + 1;
+    const newsOffsetIdx = paramIdx + 2;
+    const adsLimitIdx = paramIdx + 3;
+    const adsOffsetIdx = paramIdx + 4;
+    const astonLimitIdx = paramIdx + 5;
+    
+    params.push(parsedLimit, parsedLimit, newsOffset, parsedAds, adsOffset, Math.ceil(parsedLimit / 3));
+
+    // Build ORDER BY for news
+    let newsOrderBy = `created_at DESC`;
+    let prefQuery = `NULL as pref`;
+    
+    if (sort === "default") {
+      prefQuery = `
+        (SELECT row_to_json(p) FROM (
+          SELECT 
+            clicked_news_category,
+            skipped_news_category,
+            preferred_news_type
+          FROM preferences 
+          WHERE user_id = $1 
+          LIMIT 1
+        ) p) as pref
+      `;
+
+      newsOrderBy = `
+        COALESCE(
+          CASE WHEN geo_point IS NOT NULL THEN ${locationScoreSql} ELSE 0 END, 0
+        ) +
+        COALESCE(
+          CASE WHEN category IS NOT NULL AND pref IS NOT NULL
+          THEN (pref->>'clicked_news_category'->category)::int * 0.1
+          ELSE 0 END, 0
+        ) +
+        COALESCE(
+          CASE WHEN category IS NOT NULL AND pref IS NOT NULL
+          THEN (pref->>'skipped_news_category'->category)::int * 0.5
+          ELSE 0 END, 0
+        ) +
+        COALESCE(
+          CASE WHEN pref IS NOT NULL AND (pref->>'preferred_news_type') = area_type
+          THEN 2 ELSE 0 END, 0
+        ) +
+        ((EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600) * -0.005)
+        DESC
+      `;
+    }
+
+    const feedQuery = `
+      WITH user_pref AS (
+        SELECT ${prefQuery}
+      ),
+      news_feed AS (
+        SELECT 
+          n.news_id as id, 
+          n.title, 
+          n.short_description as description, 
+          n.content_url,
+          n.redirect_url,
+          n.is_featured,
+          n.category,
+          n.is_breaking,
+          false as is_ad,
+          false as is_aston_ad,
+          n.tags,
+          n.type_id,
+          n.updated_at,
+          n.created_at,
+          n.geo_point,
+          n.area_type,
+          
+          COALESCE(agg.view_count, 0) AS view_count,
+          COALESCE(agg.like_count, 0) AS like_count,
+          COALESCE(agg.comment_count, 0) AS comment_count,
+          COALESCE(agg.share_count, 0) AS share_count,
+          COALESCE(agg.is_liked, false) AS is_liked,
+          COALESCE(agg.is_saved, false) AS is_saved,
+          up.pref,
+          1 as feed_order
+
+        FROM news n
+        CROSS JOIN user_pref up
+        LEFT JOIN LATERAL (
+          SELECT 
+            COUNT(DISTINCT v.view_id) as view_count,
+            COUNT(DISTINCT nl.like_id) as like_count,
+            COUNT(DISTINCT c.comment_id) as comment_count,
+            COUNT(DISTINCT sh.share_id) as share_count,
+            bool_or(nl.user_id = $1) as is_liked,
+            bool_or(sv.user_id = $1 AND sv.is_ad = false) as is_saved
+          FROM (VALUES (1)) AS dummy(x)
+          LEFT JOIN views v ON v.news_id = n.news_id
+          LEFT JOIN news_likes nl ON nl.news_id = n.news_id
+          LEFT JOIN comments c ON c.news_id = n.news_id
+          LEFT JOIN shares sh ON sh.news_id = n.news_id
+          LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+        ) agg ON true
+        
+        WHERE n.is_active = true 
+          AND NOT EXISTS (
+            SELECT 1 FROM views v 
+            WHERE v.news_id = n.news_id AND v.user_id = $1
+          )
+          ${newsWhereClause}
+        
+        ORDER BY ${newsOrderBy}
+        LIMIT $${newsLimitIdx} OFFSET $${newsOffsetIdx}
+      ),
+      ads_feed AS (
+        SELECT
+          a.ad_id AS id,
+          a.title,
+          a.description,
+          a.content_url,
+          a.redirect_url,
+          a.is_featured,
+          a.category,
+          true as is_ad,
+          false as is_aston_ad,
+          a.target_tags as tags,
+          a.type_id,
+          a.updated_at,
+          a.created_at,
+          a.geo_point,
+          NULL as area_type,
+          
+          COALESCE(agg.view_count, 0) AS view_count,
+          COALESCE(agg.like_count, 0) AS like_count,
+          COALESCE(agg.comment_count, 0) AS comment_count,
+          COALESCE(agg.share_count, 0) AS share_count,
+          COALESCE(agg.is_liked, false) AS is_liked,
+          COALESCE(agg.is_saved, false) AS is_saved,
+          NULL as pref,
+          2 as feed_order
+
+        FROM advertisements a
+        LEFT JOIN LATERAL (
+          SELECT 
+            COUNT(DISTINCT v.view_id) as view_count,
+            COUNT(DISTINCT nl.like_id) as like_count,
+            COUNT(DISTINCT c.comment_id) as comment_count,
+            COUNT(DISTINCT sh.share_id) as share_count,
+            bool_or(nl.user_id = $1) as is_liked,
+            bool_or(sv.user_id = $1 AND sv.is_ad = true) as is_saved
+          FROM (VALUES (1)) AS dummy(x)
+          LEFT JOIN views v ON v.news_id = a.ad_id
+          LEFT JOIN news_likes nl ON nl.news_id = a.ad_id
+          LEFT JOIN comments c ON c.news_id = a.ad_id
+          LEFT JOIN shares sh ON sh.news_id = a.ad_id
+          LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
+        ) agg ON true
+        
+        WHERE a.is_active = true AND a.format_id = 2
+        ORDER BY 
+          CASE WHEN a.geo_point IS NOT NULL 
+          THEN (a.priority_score * 0.6) + COALESCE(${locationScoreSql}, 0)
+          ELSE a.priority_score 
+          END DESC
+        LIMIT $${adsLimitIdx} OFFSET $${adsOffsetIdx}
+      ),
+      aston_ads AS (
+        SELECT 
+          a.ad_id AS id,
+          NULL as title,
+          NULL as description,
+          a.content_url,
+          a.redirect_url,
+          false as is_featured,
+          NULL as category,
+          true as is_ad,
+          true as is_aston_ad,
+          NULL as tags,
+          NULL as type_id,
+          a.updated_at,
+          a.created_at,
+          NULL as geo_point,
+          NULL as area_type,
+          0 as view_count,
+          0 as like_count,
+          0 as comment_count,
+          0 as share_count,
+          false as is_liked,
+          false as is_saved,
+          NULL as pref,
+          3 as feed_order
+        FROM advertisements a
+        WHERE a.is_active = true AND a.format_id = 1
+        ORDER BY RANDOM()
+        LIMIT $${astonLimitIdx}
+      )
+      SELECT 
+        id, title, description, content_url, redirect_url, 
+        is_featured, category, is_ad, is_aston_ad, tags, type_id, updated_at,
+        view_count, like_count, comment_count, share_count, 
+        is_liked, is_saved, feed_order
+      FROM (
+        SELECT *, row_number() OVER (PARTITION BY feed_order ORDER BY created_at DESC) as rn
+        FROM (
+          SELECT * FROM news_feed
+          UNION ALL
+          SELECT * FROM ads_feed
+          UNION ALL
+          SELECT * FROM aston_ads
+        ) combined
+      ) final
+      ORDER BY feed_order, rn;
+    `;
+
+    const result = await db.query(feedQuery, params);
+
+    // Separate and merge in application for proper distribution
+    const newsItems = result.rows.filter(r => r.feed_order === 1);
+    const adsItems = result.rows.filter(r => r.feed_order === 2);
+    const astonItems = result.rows.filter(r => r.feed_order === 3);
+
+    // Merge logic
+    const finalData = [];
+    let newsIdx = 0, adsIdx = 0, astonIdx = 0;
+    const newsPerAd = Math.ceil(newsItems.length / (adsItems.length || 1));
+    const itemsPerAstonAd = 3; // Show aston ad every 3 items
+
+    while (newsIdx < newsItems.length || adsIdx < adsItems.length || astonIdx < astonItems.length) {
+      // Add news items
+      for (let i = 0; i < newsPerAd && newsIdx < newsItems.length; i++) {
+        finalData.push(newsItems[newsIdx++]);
+        
+        // Insert aston ad every N items
+        if (finalData.length % itemsPerAstonAd === 0 && astonIdx < astonItems.length) {
+          finalData.push(astonItems[astonIdx++]);
+        }
+      }
+      
+      // Add regular ad
+      if (adsIdx < adsItems.length) {
+        finalData.push(adsItems[adsIdx++]);
+      }
+    }
+
+    // Add any remaining aston ads
+    while (astonIdx < astonItems.length) {
+      finalData.push(astonItems[astonIdx++]);
+    }
+
+    res.status(200).json({
+      success: true,
+      page,
+      limit: parsedLimit,
+      ads_limit: parsedAds,
+      news_count: newsItems.length,
+      ads_count: adsItems.length,
+      aston_ads_count: astonItems.length,
+      data: finalData,
+    });
+
+  } catch (err) {
+    console.error("Feed API error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 router.get("/feed", verifyToken, async (req, res) => {
   try {
     const {
