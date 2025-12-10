@@ -78,31 +78,88 @@ router.post("/send-notification", verifyAdmin, async (req, res) => {
       //   },
       // };
       const message = {
-  topic: "all",
-  notification: {
-    title: title,
-    image: content_url || undefined,
-  },
-  android: {
-    notification: {
-      imageUrl: content_url || undefined,
-      priority: "high",
-      icon: "ic_stat_logo_outlined", 
-      channelId: "high_channel", 
-      sound: "notification_sound", 
-    },
-  },
-  data: {
-    news_id: news_id.toString(),
-    is_reel: "true",
-    title: title, // Add for fallback
-    body: "", // Add for fallback
-  },
-};
-      
+        topic: "all",
+        notification: {
+          title: title,
+          image: content_url || undefined,
+        },
+        android: {
+          notification: {
+            imageUrl: content_url || undefined,
+            priority: "high",
+            icon: "ic_stat_logo_outlined",
+            channelId: "high_channel",
+            sound: "notification_sound",
+          },
+        },
+        data: {
+          news_id: news_id.toString(),
+          is_reel: "true",
+          title: title, // Add for fallback
+          body: "", // Add for fallback
+        },
+      };
 
       await admin.messaging().send(message);
       console.log(`Notification sent to topic 'all' for news: "${title}"`);
+    } catch (notificationError) {
+      console.error("Failed to send FCM notification:", notificationError);
+    }
+    res
+      .status(200)
+      .json({ success: true, message: "Notification sent successfully" });
+  } catch (error) {
+    console.error("Notification sending error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/create-test-topic", async (req, res) => {
+  try {
+    const { fcm_token, topic } = req.body;
+    await admin.messaging().subscribeToTopic([fcm_token], topic);
+    res.status(200).json({ success: true, message: "Subscribed to topic successfully" });
+  } catch (error) {
+    console.error("Subscription error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/test-notification", async (req, res) => {
+  try {
+    const { news_id, topic } = req.body;
+    const contentRes = await db.query(
+      `select title, content_url from news WHERE news_id = $1`,
+      [news_id]
+    );
+    const title = contentRes.rows[0]?.title;
+    const content_url = contentRes.rows[0]?.content_url;
+    try {
+      const message = {
+        topic: topic,
+        notification: {
+          title: title,
+          image: content_url || undefined,
+        },
+        android: {
+          notification: {
+            imageUrl: content_url || undefined,
+            priority: "high",
+            icon: "ic_stat_logo_outlined",
+            channelId: "high_channel",
+            sound: "notification_sound",
+          },
+        },
+        data: {
+          news_id: news_id.toString(),
+          is_reel: "true",
+          title: title, 
+          body: "",
+        },
+      };
+
+      await admin.messaging().send(message);
+      console.log(`Notification sent to topic '${topic}' for news: "${title}"`);
     } catch (notificationError) {
       console.error("Failed to send FCM notification:", notificationError);
     }
