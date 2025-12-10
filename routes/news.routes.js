@@ -127,39 +127,10 @@ router.post("/create-test-topic", async (req, res) => {
 
 router.post("/test-notification", async (req, res) => {
   try {
-    const { news_id, topic } = req.body;
-    const contentRes = await db.query(
-      `select title, content_url from news WHERE news_id = $1`,
-      [news_id]
-    );
-    const title = contentRes.rows[0]?.title;
-    const content_url = contentRes.rows[0]?.content_url;
+    const { message } = req.body;
     try {
-      const message = {
-        topic: topic,
-        notification: {
-          title: title,
-          image: content_url || undefined,
-        },
-        android: {
-          notification: {
-            imageUrl: content_url || undefined,
-            priority: "high",
-            icon: "ic_stat_logo_outlined",
-            channelId: "high_channel",
-            sound: "notification_sound",
-          },
-        },
-        data: {
-          news_id: news_id.toString(),
-          is_reel: "true",
-          title: title, 
-          body: "",
-        },
-      };
-
       await admin.messaging().send(message);
-      console.log(`Notification sent to topic '${topic}' for news: "${title}"`);
+      console.log(`Notification sent to topic for testing`);
     } catch (notificationError) {
       console.error("Failed to send FCM notification:", notificationError);
     }
