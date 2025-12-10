@@ -118,13 +118,41 @@ router.post("/", verifyToken, async (req, res) => {
       location,
       interests
     } = req.body;
+    
+    const normalizedPhone = phone?.trim() || null;
+    const normalizedCountryCode = country_code?.trim() || null;
 
+    if (normalizedPhone && !normalizedCountryCode) {
+  return res.status(400).json({
+    error: "Country code is required when phone number is provided"
+  });
+  }
     // Validation: phone or email must be provided
-    if (!phone && !email) {
+    if (!normalizedPhone && !email) {
       return res.status(400).json({
         error: "Either phone or email must be provided"
       });
     }
+    // ✅ Check duplicate phone (excluding current user)
+  if (normalizedPhone) {
+  const phoneCheck = await db.query(
+    `
+    SELECT user_id, name, email, phone, country_code
+    FROM users
+    WHERE phone = $1
+      AND country_code = $2
+      AND user_id <> $3
+    `,
+    [normalizedPhone, normalizedCountryCode, userId]
+  );
+  if (phoneCheck.rows.length > 0) {
+    const u = phoneCheck.rows[0];
+    return res.status(409).json({
+      error: `Phone number already exists for user (${maskName(u.name)}) with email (${maskEmail(u.email)})`
+    });
+    }
+  }
+
 
     const result = await db.query(
       `UPDATE users SET
@@ -146,7 +174,7 @@ router.post("/", verifyToken, async (req, res) => {
       [
         userId,
         name,
-        phone,
+        normalizedPhone,
         email,
         country_code || null,
         profile_image_url || null,
@@ -170,6 +198,23 @@ router.post("/", verifyToken, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+function maskEmail(email) {
+  if (!email) return null;
+  const [user, domain] = email.split("@");
+  return user[0] + "***@" + domain;
+}
+
+function maskPhone(phone) {
+  if (!phone) return null;
+  return phone.slice(0, 2) + "******" + phone.slice(-2);
+}
+
+function maskName(name) {
+  if (!name) return null;
+  return name[0] + "***";
+}
+
 
 
 // router.patch("/", verifyToken, async (req, res) => {
@@ -275,12 +320,39 @@ router.patch("/", verifyToken, async (req, res) => {
 
     const finalPhone = phone ?? existing.phone;
     const finalEmail = email ?? existing.email;
+    const normalizedPhone = phone?.trim() || null;
+    const normalizedCountryCode = country_code?.trim() || null;
 
-    if (!finalPhone && !finalEmail) {
+    if (normalizedPhone && !normalizedCountryCode) {
+  return res.status(400).json({
+    error: "Country code is required when phone number is provided"
+  });
+  }
+
+    if (!normalizedPhone && !finalEmail) {
       return res.status(400).json({
         error: "At least one contact field (phone or email) must exist"
       });
     }
+
+      if (normalizedPhone) {
+  const phoneCheck = await db.query(
+    `
+    SELECT user_id, name, email, phone, country_code
+    FROM users
+    WHERE phone = $1
+      AND country_code = $2
+      AND user_id <> $3
+    `,
+    [normalizedPhone, normalizedCountryCode, userId]
+  );
+  if (phoneCheck.rows.length > 0) {
+    const u = phoneCheck.rows[0];
+    return res.status(409).json({
+      error: `Phone number already exists for user (${maskName(u.name)}) with email (${maskEmail(u.email)})`
+    });
+    }
+  }
 
     const result = await db.query(
       `UPDATE users SET
@@ -302,7 +374,7 @@ router.patch("/", verifyToken, async (req, res) => {
       [
         userId,
         name,
-        phone,
+        normalizedPhone,
         email,
         country_code,
         profile_image_url,
