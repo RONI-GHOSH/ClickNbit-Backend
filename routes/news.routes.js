@@ -119,7 +119,9 @@ router.post("/create-test-topic", async (req, res) => {
   try {
     const { fcm_token, topic } = req.body;
     await admin.messaging().subscribeToTopic([fcm_token], topic);
-    res.status(200).json({ success: true, message: "Subscribed to topic successfully" });
+    res
+      .status(200)
+      .json({ success: true, message: "Subscribed to topic successfully" });
   } catch (error) {
     console.error("Subscription error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -346,10 +348,10 @@ router.get("/details", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/top10", verifyToken, async (req, res) => {
+router.get("/top10", async (req, res) => {
   try {
     const { category = "all", ads = 0, afterTime } = req.query;
-    const categories = category.split(",").map((c) => c.trim().toLowerCase());
+    const categories = category;
     const adLimit = parseInt(ads) || 0;
     const fixedLimit = 10;
 
@@ -394,9 +396,15 @@ router.get("/top10", verifyToken, async (req, res) => {
     paramIndex++;
 
     query += ` WHERE n.is_active = true `;
+    console.log(categories);
 
     if (!categories.includes("all")) {
-      query += ` AND LOWER(n.category) = ANY($${paramIndex}) `;
+      query += ` 
+        AND (
+          SELECT array_agg(LOWER(c))
+          FROM unnest(n.category) c
+        ) && $${paramIndex}::text[]
+      `;
       params.push(categories);
       paramIndex++;
     }
@@ -513,7 +521,12 @@ router.get("/public", async (req, res) => {
     let paramIndex = 1;
 
     if (category !== "all") {
-      query += ` AND n.category = $${paramIndex} `;
+      query += ` 
+        AND (
+          SELECT array_agg(LOWER(c))
+          FROM unnest(n.category) c
+        ) && $${paramIndex}
+      `;
       params.push(category);
       paramIndex++;
     }
@@ -629,8 +642,12 @@ router.get("/search-news", verifyToken, async (req, res) => {
     }
 
     if (category) {
-      query += ` AND LOWER(n.category) = LOWER($${i})`;
-      params.push(category.trim());
+      query += `
+        AND (
+          SELECT array_agg(LOWER(c))
+          FROM unnest(n.category) c
+        ) && $${i}`;
+      params.push(category);
       i++;
     }
 
@@ -748,7 +765,10 @@ router.get("/banner", verifyToken, async (req, res) => {
     `;
 
     if (category !== "all") {
-      newsQuery += ` AND n.category = $${paramIndex} `;
+      newsQuery += ` AND (
+        SELECT array_agg(LOWER(c))
+        FROM unnest(n.category) c
+      ) && $${paramIndex} `;
       newsParams.push(category);
       paramIndex++;
     }
@@ -900,7 +920,12 @@ router.get("/feed", verifyToken, async (req, res) => {
     }
 
     if (category) {
-      newsQuery += ` AND n.category = $${idx} `;
+      newsQuery += `
+        AND (
+          SELECT array_agg(LOWER(c))
+          FROM unnest(n.category) c
+        ) && $${idx} 
+      `;
       params.push(category);
       idx++;
     }
@@ -929,22 +954,34 @@ router.get("/feed", verifyToken, async (req, res) => {
       if (prefJson) {
         newsQuery += `
           ORDER BY (
-            ${locationScoreSql} +
-            (CASE 
-              WHEN n.category IS NOT NULL 
-              THEN COALESCE((($${idx}::jsonb->'clicked_news_category'->>n.category)::int), 0) * 0.1
-              ELSE 0
-            END) +
-            (CASE 
-              WHEN n.category IS NOT NULL 
-              THEN COALESCE((($${idx}::jsonb->'skipped_news_category'->>n.category)::int), 0) * 0.5
-              ELSE 0
-            END) +
-            (CASE 
-              WHEN ($${idx}::jsonb->>'preferred_news_type') = n.area_type 
-              THEN 2 ELSE 0
-            END) +
-            ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
+              ${locationScoreSql}
+              +
+              (
+                COALESCE(
+                  (
+                    SELECT SUM(COALESCE(($${idx}::jsonb->'clicked_news_category'->>cat)::int, 0))
+                    FROM unnest(n.category) as cat
+                  ), 
+                  0
+                ) * 0.1
+              ) 
+              +
+              (
+                COALESCE(
+                  (
+                    SELECT SUM(COALESCE(($${idx}::jsonb->'skipped_news_category'->>cat)::int, 0))
+                    FROM unnest(n.category) as cat
+                  ), 
+                  0
+                ) * 0.5
+              )
+              +
+              (CASE 
+                  WHEN ($${idx}::jsonb->>'preferred_news_type') = n.area_type 
+                  THEN 2 ELSE 0
+              END)
+              +
+              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
           ) DESC
         `;
         params.push(prefJson);
@@ -1099,8 +1136,9 @@ router.get("/", async (req, res) => {
     let params = [];
     let paramIndex = 1;
 
+    // UPDATED: Changed to ANY() since category is now an array
     if (category) {
-      conditions.push(`category = $${paramIndex}`);
+      conditions.push(`$${paramIndex} = ANY(category)`);
       params.push(category);
       paramIndex++;
     }
@@ -1503,9 +1541,10 @@ router.get("/top/single-metric", async (req, res) => {
       `;
     }
 
-    // Add WHERE clause for category filter
+    // UPDATED: Changed WHERE clause for array comparison
     if (category) {
-      query += ` WHERE n.category = $1 AND n.is_active = true`;
+      // Logic: Does the news category array contain the query param?
+      query += ` WHERE $1 = ANY(n.category) AND n.is_active = true`;
     } else {
       query += ` WHERE n.is_active = true`;
     }
@@ -1648,9 +1687,9 @@ router.get("/top/multi-metric", async (req, res) => {
       ${joins.join("\n")}
     `;
 
-    // Add WHERE clause for category filter
+    // UPDATED: Changed WHERE clause for array comparison
     if (category) {
-      query += ` WHERE n.category = $1 AND n.is_active = true`;
+      query += ` WHERE $1 = ANY(n.category) AND n.is_active = true`;
     } else {
       query += ` WHERE n.is_active = true`;
     }
