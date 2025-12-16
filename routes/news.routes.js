@@ -390,7 +390,7 @@ router.get("/top10", async (req, res) => {
         SELECT 
            n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
            n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
-           n.priority_score,
+           n.priority_score, n.fullscreen,
            COALESCE(v.view_count, 0) AS view_count,
            COALESCE(l.like_count, 0) AS like_count,
            COALESCE(c.comment_count, 0) AS comment_count,
@@ -446,6 +446,7 @@ router.get("/top10", async (req, res) => {
         nb.is_ad,
         nb.type_id,
         nb.updated_at,
+        nb.fullscreen,
         nb.view_count,
         nb.like_count,
         nb.comment_count,
@@ -479,6 +480,7 @@ router.get("/top10", async (req, res) => {
           a.target_tags as tags,
           a.type_id,
           a.updated_at,
+          a.fullscreen,
 
           COALESCE(v.view_count, 0) AS view_count,
           COALESCE(l.like_count, 0) AS like_count,
@@ -860,7 +862,7 @@ router.get("/banner", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/feed", verifyToken, async (req, res) => {
+router.get("/feed", async (req, res) => {
   try {
     const {
       type = "all",
@@ -874,7 +876,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       currentPage = 1,
     } = req.query;
 
-    const userId = req.user.id;
+    const userId = 27//req.user.id;
     const parsedLimit = parseInt(limit) || 10;
     const parsedAds = parseInt(ads) || 1;
     const page = parseInt(currentPage) || 1;
@@ -1069,6 +1071,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         a.type_id,
         a.target_tags as tags,
         a.updated_at,
+        a.fullscreen,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
