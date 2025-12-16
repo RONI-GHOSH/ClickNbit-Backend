@@ -168,6 +168,7 @@ router.post("/", verifyAdmin, async (req, res) => {
       priority_score,
       relevance_expires_at,
       expires_at,
+      fullscreen
     } = req.body;
 
     // Validate required fields
@@ -184,13 +185,13 @@ router.post("/", verifyAdmin, async (req, res) => {
         admin_id, type_id, title, short_description, long_description, 
         content_url, redirect_url, tags, category, area_names, 
         geo_point, radius_km, is_strict_location, is_active, is_featured, 
-        is_breaking, priority_score, relevance_expires_at, expires_at
+        is_breaking, priority_score, relevance_expires_at, expires_at, fullscreen
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-        $11, $12, $13, $14, $15, $16, $17, $18, $19
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
       ) RETURNING news_id, title, redirect_url, tags, category, area_names, 
         geo_point, radius_km, is_strict_location, is_active, is_featured, 
-        is_breaking, priority_score, relevance_expires_at, expires_at, created_at`,
+        is_breaking, priority_score, relevance_expires_at, expires_at, created_at, fullscreen`,
       [
         req.admin.id,
         type_id,
@@ -211,6 +212,7 @@ router.post("/", verifyAdmin, async (req, res) => {
         priority_score,
         relevance_expires_at,
         expires_at,
+        fullscreen
       ]
     );
 
@@ -292,6 +294,7 @@ router.get("/details", verifyToken, async (req, res) => {
         n.updated_at,
         n.area_type,
         n.priority_score,
+        n.fullscreen,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -894,6 +897,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         n.tags,
         n.type_id,
         n.updated_at,
+        n.fullscreen,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
