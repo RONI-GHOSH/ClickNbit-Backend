@@ -493,12 +493,12 @@ router.put("/:id", verifyAdmin, async (req, res) => {
 
     if (start_at !== undefined) {
       updateFields.push(`start_at = $${paramCounter++}`);
-      queryParams.push(start_at);
+      queryParams.push(start_at || null);
     }
 
     if (end_at !== undefined) {
       updateFields.push(`end_at = $${paramCounter++}`);
-      queryParams.push(end_at);
+      queryParams.push(end_at || null);
     }
 
     if (fullscreen !== undefined) {
