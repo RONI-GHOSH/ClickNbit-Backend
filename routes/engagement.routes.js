@@ -445,7 +445,7 @@ router.get("/view", verifyToken, async (req, res) => {
       FROM views
       WHERE user_id = $1
         AND is_ad = false
-      ORDER BY created_at DESC
+      ORDER BY viewed_at DESC
       LIMIT 100
     `;
 
