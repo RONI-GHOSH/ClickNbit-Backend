@@ -368,12 +368,33 @@ router.get("/top10", async (req, res) => {
     params.push(userId); 
     let userIdParam = `$${paramIndex++}`;
 
-    if (!categories.includes("all")) {
-      newsWhereClause += ` 
-        AND (
-          SELECT array_agg(LOWER(c))
+    // if (!categories.includes("all")) {
+    //   newsWhereClause += ` 
+    //     AND (
+    //       SELECT array_agg(LOWER(c))
+    //       FROM unnest(n.category) c
+    //     ) && $${paramIndex}::text[]
+    //   `;
+    //   params.push(categories);
+    //   paramIndex++;
+    // }
+    // ---- normalize category ----
+    let categories = req.query.category ?? req.query['category[]'] ?? 'all';
+
+    if (typeof categories === 'string') {
+      categories = [categories];
+    }
+
+    categories = categories.map(c => c.toLowerCase());
+
+
+    if (!categories.includes('all')) {
+      newsWhereClause += `
+        AND EXISTS (
+          SELECT 1
           FROM unnest(n.category) c
-        ) && $${paramIndex}::text[]
+          WHERE LOWER(c) = ANY($${paramIndex}::text[])
+        )
       `;
       params.push(categories);
       paramIndex++;
