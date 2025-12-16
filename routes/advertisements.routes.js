@@ -264,11 +264,11 @@ router.post("/", verifyAdmin, async (req, res) => {
         admin_id, format_id, title, description, content_url, redirect_url,
         target_tags, target_categories, area_names, geo_point, radius_km,
         is_strict_location, view_target, click_target, like_target, share_target,
-        is_active, is_featured, priority_score, relevance_expires_at, start_at, end_at, category
+        is_active, is_featured, priority_score, relevance_expires_at, start_at, end_at, category, fullscreen
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, 
         ST_GeographyFromText($10), 
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
       ) RETURNING *
     `;
 
@@ -295,7 +295,8 @@ router.post("/", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       start_at || new Date(),
       end_at || null,
-      category || null
+      category || null,
+      fullscreen || false
     ];
 
     const result = await pool.query(query, values);
@@ -375,6 +376,7 @@ router.put("/:id", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       start_at,
       end_at,
+      fullscreen,
     } = req.body;
 
     // Check if advertisement exists
@@ -496,6 +498,11 @@ router.put("/:id", verifyAdmin, async (req, res) => {
     if (end_at !== undefined) {
       updateFields.push(`end_at = $${paramCounter++}`);
       queryParams.push(end_at);
+    }
+
+    if (fullscreen !== undefined) {
+      updateFields.push(`fullscreen = $${paramCounter++}`);
+      queryParams.push(fullscreen);
     }
 
     // Always update the updated_at timestamp
