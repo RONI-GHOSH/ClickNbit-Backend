@@ -354,7 +354,7 @@ router.get("/details", verifyToken, async (req, res) => {
 router.get("/top10", async (req, res) => {
   try {
     const { category = "all", ads = 0, afterTime } = req.query;
-    const categories = category;
+    let categories = category;
     const adLimit = parseInt(ads) || 0;
     const fixedLimit = 10;
 
@@ -379,7 +379,7 @@ router.get("/top10", async (req, res) => {
     //   paramIndex++;
     // }
     // ---- normalize category ----
-    let categories = req.query.category ?? req.query['category[]'] ?? 'all';
+    categories = req.query.category ?? req.query['category[]'] ?? 'all';
 
     if (typeof categories === 'string') {
       categories = [categories];
