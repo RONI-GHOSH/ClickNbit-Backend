@@ -903,48 +903,16 @@ router.get("/feed", verifyToken, async (req, res) => {
     const params = [userId];
     let idx = 2;
 
-    let newsQuery = `
-      SELECT 
-        n.news_id as id, 
-        n.title, 
-        n.short_description as description, 
-        n.content_url,
-        n.redirect_url,
-        n.is_featured,
-        n.category,
-        n.is_breaking,
-        n.is_ad,
-        n.tags,
-        n.type_id,
-        n.updated_at,
-        n.fullscreen,
-
-        COALESCE(v.view_count, 0) AS view_count,
-        COALESCE(l.like_count, 0) AS like_count,
-        COALESCE(c.comment_count, 0) AS comment_count,
-        COALESCE(s.share_count, 0) AS share_count,
-
-        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-
-      FROM news n
-      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
-      LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
-      LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
-      LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-      LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
-      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
-      WHERE n.is_active = true
-    `;
+    let newsWhere = `n.is_active = true`;
 
     if (type !== "all") {
-      newsQuery += ` AND n.type_id = $${idx} `;
+      newsWhere += ` AND n.type_id = $${idx} `;
       params.push(type);
       idx++;
     }
 
     if (category) {
-      newsQuery += `
+      newsWhere += `
         AND (
           SELECT array_agg(LOWER(c))
           FROM unnest(n.category) c
@@ -955,11 +923,13 @@ router.get("/feed", verifyToken, async (req, res) => {
     }
 
     if (afterTime) {
-      newsQuery += ` AND n.created_at > $${idx} `;
+      newsWhere += ` AND n.created_at > $${idx} `;
       params.push(new Date(afterTime));
       idx++;
     }
 
+    let newsOrderBy = "";
+    
     if (sort === "default") {
       let locationScoreSql = "0";
       if (hasLocation) {
@@ -976,59 +946,115 @@ router.get("/feed", verifyToken, async (req, res) => {
       }
 
       if (prefJson) {
-        newsQuery += `
+        params.push(prefJson);
+        const pIdx = idx; 
+        idx++;
+
+        newsOrderBy = `
           ORDER BY (
               ${locationScoreSql}
               +
-              (
-                COALESCE(
-                  (
-                    SELECT SUM(COALESCE(($${idx}::jsonb->'clicked_news_category'->>cat)::int, 0))
-                    FROM unnest(n.category) as cat
-                  ), 
-                  0
-                ) * 0.1
-              ) 
+              (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'clicked_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.1) 
               +
-              (
-                COALESCE(
-                  (
-                    SELECT SUM(COALESCE(($${idx}::jsonb->'skipped_news_category'->>cat)::int, 0))
-                    FROM unnest(n.category) as cat
-                  ), 
-                  0
-                ) * 0.5
-              )
+              (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'skipped_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.5)
               +
-              (CASE 
-                  WHEN ($${idx}::jsonb->>'preferred_news_type') = n.area_type 
-                  THEN 2 ELSE 0
-              END)
+              (CASE WHEN ($${pIdx}::jsonb->>'preferred_news_type') = n.area_type THEN 2 ELSE 0 END)
               +
               ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
           ) DESC
         `;
-        params.push(prefJson);
-        idx++;
       } else {
         if (hasLocation) {
-          newsQuery += ` 
+          newsOrderBy = `
             ORDER BY (
               ${locationScoreSql} + 
               ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
             ) DESC 
           `;
         } else {
-          newsQuery += ` ORDER BY n.created_at DESC `;
+          newsOrderBy = ` ORDER BY n.created_at DESC `;
         }
       }
+    } else {
+        newsOrderBy = ` ORDER BY n.created_at DESC `;
     }
-
-    newsQuery += ` LIMIT $${idx} OFFSET $${idx + 1} `;
+  
+    const limitParamIdx = idx; 
+    const offsetParamIdx = idx + 1;
     params.push(parsedLimit, newsOffset);
-    idx += 2;
 
-    const newsRes = await db.query(newsQuery, params);
+    const mainQuery = `
+      WITH news_batch AS (
+        SELECT 
+            n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+            n.is_featured, n.category, n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, n.fullscreen,
+            COALESCE(v.view_count, 0) AS view_count,
+            COALESCE(l.like_count, 0) AS like_count,
+            COALESCE(c.comment_count, 0) AS comment_count,
+            COALESCE(s.share_count, 0) AS share_count,
+            CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+            CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved,
+            ROW_NUMBER() OVER (${newsOrderBy}) as rn
+        FROM news n
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+        LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+        LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+        WHERE ${newsWhere}
+        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+      ),
+
+      ads_batch AS (
+        SELECT 
+            ad_id, content_url, redirect_url,
+            ROW_NUMBER() OVER (
+                ORDER BY (
+                    (view_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
+                    (click_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.3 + 
+                    (like_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.2 + 
+                    (share_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.1
+                ) DESC
+            ) as rn
+        FROM advertisements
+        WHERE format_id = 1 
+          AND is_active = true 
+          AND end_at > NOW()
+        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+      )
+
+      SELECT 
+        nb.news_id as id, 
+        nb.title, 
+        nb.short_description as description, 
+        nb.content_url,
+        nb.redirect_url,
+        nb.is_featured,
+        nb.category,
+        nb.is_breaking,
+        nb.is_ad,
+        nb.tags,
+        nb.type_id,
+        nb.updated_at,
+        nb.fullscreen,
+        nb.view_count,
+        nb.like_count,
+        nb.comment_count,
+        nb.share_count,
+        nb.is_liked,
+        nb.is_saved,
+
+        ab.ad_id as aston_news_id, 
+        ab.content_url as bottom_ad_content_url, 
+        ab.redirect_url as bottom_ad_redirect_url
+
+      FROM news_batch nb
+      LEFT JOIN ads_batch ab ON nb.rn = ab.rn
+      ORDER BY nb.rn ASC
+    `;
+
+    const newsRes = await db.query(mainQuery, params);
 
     let adQuery = `
       SELECT
@@ -1043,15 +1069,12 @@ router.get("/feed", verifyToken, async (req, res) => {
         a.type_id,
         a.target_tags as tags,
         a.updated_at,
-
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
         COALESCE(s.share_count, 0) AS share_count,
-
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
         CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-
       FROM advertisements a
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
@@ -1086,18 +1109,6 @@ router.get("/feed", verifyToken, async (req, res) => {
 
     const finalData = mergeNewsWithAds(newsRes.rows, adsRes.rows);
 
-    const astads = await db.query(
-      `SELECT 
-        a.ad_id AS id,
-        a.content_url,
-        a.redirect_url
-      FROM advertisements a
-      WHERE a.is_active = true AND a.format_id = 1
-      ORDER BY RANDOM()
-      LIMIT $1`,
-      [limit]
-    );
-
     res.status(200).json({
       success: true,
       page,
@@ -1107,7 +1118,6 @@ router.get("/feed", verifyToken, async (req, res) => {
       ads_count: adsRes.rows.length,
       news: newsRes.rows,
       ads: adsRes.rows,
-      astonAds: astads.rows,
       data: finalData,
     });
   } catch (err) {
