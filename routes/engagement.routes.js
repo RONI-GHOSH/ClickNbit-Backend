@@ -419,14 +419,47 @@ router.post("/view", verifyToken, async (req, res) => {
   }
 });
 
+// router.get("/view", verifyToken, async (req, res) => {
+//     try {
+//         const user = req.user;
+//             const query = `
+//                   SELECT news_id as id FROM views WHERE user_id = $1
+//                       `;
+//                           const result = await pool.query(query, [user.id]);
+//                               res.json({ success: true, data: result.rows });
+//                                 } catch (error) {
+//                                     console.error("View API error:", error);
+//                                         res.status(500).json({
+//                                               success: false,
+//                                                     message: "Server error",
+//                                                         });
+//                                                           }
+//                                                           }); 
+// })
 router.get("/view", verifyToken, async (req, res) => {
   try {
-    const user = req.user;
+    const userId = req.user.id;
+
     const query = `
-      SELECT news_id as id FROM views WHERE user_id = $1
+      SELECT news_id
+      FROM views
+      WHERE user_id = $1
+        AND is_ad = false
+      ORDER BY viewed_at DESC
+      LIMIT 100
     `;
-    const result = await pool.query(query, [user.id]);
-    res.json({ success: true, data: result.rows });
+
+    const result = await pool.query(query, [userId]);
+
+    const data = {};
+    for (const row of result.rows) {
+      data[row.news_id] = true;
+    }
+
+    res.json({
+      success: true,
+      data,
+    });
   } catch (error) {
     console.error("View API error:", error);
     res.status(500).json({
@@ -434,7 +467,8 @@ router.get("/view", verifyToken, async (req, res) => {
       message: "Server error",
     });
   }
-}); 
+});
+
 
 router.post("/click", verifyToken, async (req, res) => {
   try {
