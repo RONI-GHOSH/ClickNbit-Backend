@@ -247,7 +247,8 @@ router.post("/", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       start_at,
       end_at,
-      category
+      category,
+      fullscreen,
     } = req.body;
 
     // Validate required fields
