@@ -766,6 +766,18 @@ router.get("/banner", verifyToken, async (req, res) => {
   try {
     const { category = "all", count = 5, ads = 2, afterTime } = req.query;
 
+    // ---- normalize category ----
+    let categories = req.query.category ?? req.query['category[]'] ?? 'all';
+
+    if (typeof categories === 'string') {
+      categories = [categories];
+    }
+
+    categories = categories.map(c => c.toLowerCase());
+
+
+ 
+
     const parsedCount = parseInt(count) || 5;
     const parsedAds = parseInt(ads) || 2;
 
@@ -808,12 +820,23 @@ router.get("/banner", verifyToken, async (req, res) => {
       AND (n.is_featured = true OR n.is_breaking = true)
     `;
 
-    if (category !== "all") {
-      newsQuery += ` AND (
-        SELECT array_agg(LOWER(c))
-        FROM unnest(n.category) c
-      ) && $${paramIndex} `;
-      newsParams.push(category);
+    // if (category !== "all") {
+    //   newsQuery += ` AND (
+    //     SELECT array_agg(LOWER(c))
+    //     FROM unnest(n.category) c
+    //   ) && $${paramIndex} `;
+    //   newsParams.push(category);
+    //   paramIndex++;
+    // }
+    if (!categories.includes('all')) {
+      newsWhereClause += `
+        AND EXISTS (
+          SELECT 1
+          FROM unnest(n.category) c
+          WHERE LOWER(c) = ANY($${paramIndex}::text[])
+        )
+      `;
+      newsParams.push(categories);
       paramIndex++;
     }
 
