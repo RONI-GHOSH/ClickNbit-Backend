@@ -1356,6 +1356,7 @@ router.put("/:id", verifyAdmin, async (req, res) => {
       priority_score,
       relevance_expires_at,
       expires_at,
+      fullscreen,
     } = req.body;
 
     // Check if news exists
@@ -1464,6 +1465,11 @@ router.put("/:id", verifyAdmin, async (req, res) => {
     if (expires_at !== undefined) {
       updateFields.push(`expires_at = $${paramIndex++}`);
       values.push(expires_at);
+    }
+
+    if (fullscreen !== undefined) {
+      updateFields.push(`fullscreen = $${paramIndex++}`);
+      values.push(fullscreen);
     }
 
     // Always update the updated_at timestamp
