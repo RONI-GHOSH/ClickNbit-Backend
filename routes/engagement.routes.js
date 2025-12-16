@@ -338,7 +338,7 @@ router.post("/share", verifyToken, async (req, res) => {
 router.post("/view", verifyToken, async (req, res) => {
   try {
     const user = req.user;
-    const { id, is_ad, duration_seconds = 0, device_type, location } = req.body;
+    const { id, is_ad, duration_seconds = 0, device_type, location, aston_ad_id = null } = req.body;
 
     if (!id || typeof is_ad === "undefined" || !device_type) {
       return res.status(400).json({
@@ -379,11 +379,35 @@ router.post("/view", verifyToken, async (req, res) => {
       : [id, user.id, duration_seconds, device_type, is_ad];
 
     const result = await pool.query(query, params);
+    const rows = { main_view: result.rows[0] };
+    if (aston_ad_id) {
+      const astonQuery = `
+        INSERT INTO views (
+          ad_id,
+          user_id,
+          duration_seconds,
+          device_type,
+          location,
+          is_ad
+        )
+        VALUES (
+          $1, $2, $3, $4,
+          ${lat && lng ? `ST_SetSRID(ST_MakePoint($5, $6), 4326)` : `NULL`},
+          $${lat && lng ? 7 : 5}
+        )
+        RETURNING *;
+      `;
+      const astonParams = lat && lng ?
+        [aston_ad_id, user.id, duration_seconds, device_type, lng, lat, true]
+        : [aston_ad_id, user.id, duration_seconds, device_type, true];
+      const res2 = await pool.query(astonQuery, astonParams);
+      rows.aston_view = res2.rows[0];
+    }
 
     return res.status(201).json({
       success: true,
       message: "View recorded",
-      data: result.rows[0],
+      data: rows
     });
 
   } catch (error) {
