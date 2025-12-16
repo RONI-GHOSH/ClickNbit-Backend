@@ -45,6 +45,7 @@ router.post("/news", verifyAdmin, async (req, res) => {
       priority_score,
       relevance_expires_at,
       expires_at,
+      fullscreen,
     } = req.body;
 
     const query = `
@@ -52,12 +53,12 @@ router.post("/news", verifyAdmin, async (req, res) => {
         admin_id, type_id, is_ad, title, short_description, long_description,
         content_url, redirect_url, tags, category, area_names, geo_point,
         radius_km, is_strict_location, is_active, is_featured, is_breaking,
-        priority_score, relevance_expires_at, expires_at
+        priority_score, relevance_expires_at, expires_at, fullscreen
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, ST_GeogFromText($12), $13, $14, $15, $16, $17,
-        $18, $19, $20
+        $18, $19, $20, $21
       )
       RETURNING *;
     `;
@@ -83,6 +84,7 @@ router.post("/news", verifyAdmin, async (req, res) => {
       priority_score,
       relevance_expires_at,
       expires_at,
+      fullscreen,
     ];
 
     const result = await pool.query(query, values);
@@ -152,6 +154,7 @@ router.patch("/news", verifyAdmin, async (req, res) => {
       "priority_score",
       "relevance_expires_at",
       "expires_at",
+      "fullscreen",
     ];
 
     const updates = [];
@@ -238,6 +241,7 @@ router.post("/ads", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       start_at,
       end_at,
+      fullscreen,
     } = req.body;
 
     const query = `
@@ -247,12 +251,12 @@ router.post("/ads", verifyAdmin, async (req, res) => {
         radius_km, is_strict_location, view_target, click_target, like_target,
         share_target, current_views, current_clicks, current_likes,
         current_shares, is_active, is_featured, priority_score,
-        relevance_expires_at, start_at, end_at
+        relevance_expires_at, start_at, end_at, fullscreen
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
         ST_GeogFromText($12), $13, $14, $15, $16, $17, $18, $19, $20, $21,
-        $22, $23, $24, $25, $26, $27, $28
+        $22, $23, $24, $25, $26, $27, $28, $29
       )
       RETURNING *;
     `;
@@ -286,6 +290,7 @@ router.post("/ads", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       start_at || null,
       end_at || null,
+      fullscreen,
     ];
 
     const result = await pool.query(query, values);
@@ -362,6 +367,7 @@ router.patch("/ads", verifyAdmin, async (req, res) => {
       "relevance_expires_at",
       "start_at",
       "end_at",
+      "fullscreen",
     ];
 
     const updates = [];
