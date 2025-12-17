@@ -353,61 +353,61 @@ router.get("/details", verifyToken, async (req, res) => {
 
 router.get("/top10", async (req, res) => {
   try {
-    const { category = "all", ads = 0, afterTime } = req.query;
-    let categories = category;
-    const adLimit = parseInt(ads) || 0;
+    const { ads = 0 } = req.query;
     const fixedLimit = 10;
-
+    const adLimit = parseInt(ads) || 0;
     const userId = req.user?.id || null;
 
-    const params = [];
-    let paramIndex = 1;
-
-    let newsWhereClause = `n.is_active = true`;
-    
-    params.push(userId); 
-    let userIdParam = `$${paramIndex++}`;
-
-    // if (!categories.includes("all")) {
-    //   newsWhereClause += ` 
-    //     AND (
-    //       SELECT array_agg(LOWER(c))
-    //       FROM unnest(n.category) c
-    //     ) && $${paramIndex}::text[]
-    //   `;
-    //   params.push(categories);
-    //   paramIndex++;
-    // }
-    // ---- normalize category ----
-    categories = req.query.category ?? req.query['category[]'] ?? 'all';
-
-    if (typeof categories === 'string') {
-      categories = [categories];
-    }
-
+    let categories = req.query.category ?? req.query['category[]'] ?? 'all';
+    if (typeof categories === 'string') categories = [categories];
     categories = categories.map(c => c.toLowerCase());
 
+    let finalNews = [];
+    let lookbackDay = 0;
+    const maxLookback = 30;
 
-    if (!categories.includes('all')) {
-      newsWhereClause += `
-        AND EXISTS (
-          SELECT 1
-          FROM unnest(n.category) c
-          WHERE LOWER(c) = ANY($${paramIndex}::text[])
-        )
+    while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
+      const needed = fixedLimit - finalNews.length;
+
+      const params = [];
+      let paramIndex = 1;
+
+      let newsWhereClause = `n.is_active = true`;
+
+      params.push(userId);
+      const userIdParam = `$${paramIndex++}`;
+
+      
+      if (!categories.includes('all')) {
+        newsWhereClause += `
+          AND EXISTS (
+            SELECT 1
+            FROM unnest(n.category) c
+            WHERE LOWER(c) = ANY($${paramIndex}::text[])
+          )
+        `;
+        params.push(categories);
+        paramIndex++;
+      }
+
+      const daysAgoStart = lookbackDay;
+      const daysAgoEnd = lookbackDay + 1;
+      
+      params.push(daysAgoStart);
+      const pStart = `$${paramIndex++}`;
+      
+      params.push(daysAgoEnd);
+      const pEnd = `$${paramIndex++}`;
+
+      newsWhereClause += ` 
+        AND n.created_at <= NOW() - (${pStart} || ' days')::interval
+        AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
       `;
-      params.push(categories);
-      paramIndex++;
-    }
 
-    if (afterTime) {
-      newsWhereClause += ` AND n.created_at > $${paramIndex} `;
-      params.push(afterTime);
-      paramIndex++;
-    }
+      params.push(needed);
+      const pLimit = `$${paramIndex++}`;
 
-    const query = `
-      WITH news_batch AS (
+      const query = `
         SELECT 
            n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
            n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
@@ -417,16 +417,7 @@ router.get("/top10", async (req, res) => {
            COALESCE(c.comment_count, 0) AS comment_count,
            COALESCE(s.share_count, 0) AS share_count,
            CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved,
-           ROW_NUMBER() OVER (
-             ORDER BY (
-               (COALESCE(v.view_count, 0) * 0.4) +
-               (COALESCE(l.like_count, 0) * 0.3) +
-               (COALESCE(c.comment_count, 0) * 0.2) +
-               (COALESCE(s.share_count, 0) * 0.1) +
-               (COALESCE(n.priority_score, 0) * 0.5)
-             ) DESC
-           ) as rn
+           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
         FROM news n
         LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
@@ -435,56 +426,32 @@ router.get("/top10", async (req, res) => {
         LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
         LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
         WHERE ${newsWhereClause}
-        LIMIT ${fixedLimit}
-      ),
+        ORDER BY (
+           (COALESCE(v.view_count, 0) * 0.4) +
+           (COALESCE(l.like_count, 0) * 0.3) +
+           (COALESCE(c.comment_count, 0) * 0.2) +
+           (COALESCE(s.share_count, 0) * 0.1) +
+           (COALESCE(n.priority_score, 0) * 0.5)
+        ) DESC
+        LIMIT ${pLimit}
+      `;
+
+      const result = await pool.query(query, params);
       
-      ads_batch AS (
-        SELECT 
-           ad_id, content_url, redirect_url,
-           ROW_NUMBER() OVER (
-             ORDER BY (
-               (view_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
-               (click_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.3 + 
-               (like_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.2 + 
-               (share_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.1
-             ) DESC
-           ) as rn
-        FROM advertisements
-        WHERE format_id = 1 AND end_at > NOW()
-        LIMIT ${fixedLimit}
-      )
+      if (result.rows.length > 0) {
+        finalNews = finalNews.concat(result.rows);
+      }
 
-      SELECT 
-        nb.news_id as id, 
-        nb.title, 
-        nb.short_description as description, 
-        nb.content_url,
-        nb.redirect_url,
-        nb.is_featured,
-        nb.is_breaking,
-        nb.category,
-        nb.tags,
-        nb.is_ad,
-        nb.type_id,
-        nb.updated_at,
-        nb.fullscreen,
-        nb.view_count,
-        nb.like_count,
-        nb.comment_count,
-        nb.share_count,
-        nb.is_liked,
-        nb.is_saved,
+      lookbackDay++;
+    }
 
-        ab.ad_id as aston_news_id, 
-        ab.content_url as bottom_ad_content_url, 
-        ab.redirect_url as bottom_ad_redirect_url
+    finalNews = finalNews.map((item, index) => ({
+      ...item,
+      id: item.news_id,
+      description: item.short_description,
+      rn: index + 1
+    }));
 
-      FROM news_batch nb
-      LEFT JOIN ads_batch ab ON nb.rn = ab.rn
-      ORDER BY nb.rn ASC;
-    `;
-
-    const newsResult = await pool.query(query, params);
 
     let adsResult = [];
     if (adLimit > 0) {
@@ -502,12 +469,12 @@ router.get("/top10", async (req, res) => {
           a.type_id,
           a.updated_at,
           a.fullscreen,
-
+          
+          /* Ad metrics joins... */
           COALESCE(v.view_count, 0) AS view_count,
           COALESCE(l.like_count, 0) AS like_count,
           COALESCE(c.comment_count, 0) AS comment_count,
           COALESCE(s.share_count, 0) AS share_count,
-
           CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
@@ -522,21 +489,21 @@ router.get("/top10", async (req, res) => {
         ORDER BY a.created_at DESC
         LIMIT $1
       `;
-
       adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
     }
 
-    const finalData = mergeNewsWithAds(newsResult.rows, adsResult);
+    const finalData = mergeNewsWithAds(finalNews, adsResult);
 
     res.status(200).json({
       success: true,
       limit: fixedLimit,
       adsInserted: adsResult.length,
-      afterTime: afterTime || null,
+      daysChecked: lookbackDay,
       categories,
       totalReturned: finalData.length,
       data: finalData,
     });
+
   } catch (error) {
     console.error("Top10 fetch error:", error);
     res.status(500).json({ success: false, message: "Server error" });
