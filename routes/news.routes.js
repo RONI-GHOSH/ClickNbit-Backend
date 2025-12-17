@@ -585,148 +585,116 @@ router.get("/public", async (req, res) => {
 
 router.get("/search-news", verifyToken, async (req, res) => {
   try {
-    const { q = "", count = 20, afterTime, category = null } = req.query;
+    const { 
+      q = "", 
+      page = 1, 
+      limit = 20, 
+      afterTime, 
+      category = null 
+    } = req.query;
 
-    if (!q || q.trim() === "") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Search query required" });
-    }
-
-    const parsedCount = parseInt(count) || 20;
     const userId = req.user?.id || null;
+    
+    const parsedPage = parseInt(page) || 1;
+    const parsedLimit = parseInt(limit) || 20;
+    const offset = (parsedPage - 1) * parsedLimit;
 
-    const searchTerms = q
-      .trim()
-      .normalize("NFC")
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((k) => k.length > 0);
+    const cleanQuery = q ? q.trim().normalize('NFC') : "";
+    const isSearchMode = cleanQuery.length > 0;
 
     const params = [userId];
-    let i = 2;
+    let paramIndex = 2;
+
+    let scoreCalculation = "0 as search_score";
+    
+    if (isSearchMode) {
+      params.push(`%${cleanQuery}%`);
+      scoreCalculation = `
+        (
+          CASE WHEN n.title ILIKE $${paramIndex} THEN 5 ELSE 0 END +
+          CASE WHEN n.short_description ILIKE $${paramIndex} THEN 3 ELSE 0 END +
+          CASE WHEN $${paramIndex} ILIKE ANY(n.tags) THEN 2 ELSE 0 END
+        ) as search_score
+      `;
+      paramIndex++;
+    }
 
     let query = `
       SELECT
-        n.news_id AS id,
-        n.title,
-        n.short_description AS description,
-        n.content_url,
-        n.redirect_url,
-        n.is_featured,
-        n.category,
-        n.is_breaking,
-        n.is_ad,
-        n.tags,
-        n.type_id,
-        n.updated_at,
-        n.created_at,
-        n.priority_score,
+        n.news_id AS id, n.title, n.short_description AS description, 
+        n.content_url, n.redirect_url, n.is_featured, n.category, 
+        n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, 
+        n.created_at, n.priority_score,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(c.comment_count, 0) AS comment_count,
         COALESCE(s.share_count, 0) AS share_count,
-
+        
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-        CASE WHEN sv.save_id IS NOT NULL THEN true ELSE false END AS is_saved
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved,
+
+        ${scoreCalculation}
 
       FROM news n
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-
       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
-
-      LEFT JOIN saves sv 
-        ON sv.id = n.news_id 
-        AND sv.user_id = $1 
-        AND sv.is_ad = false
+      LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
 
       WHERE n.is_active = true
         AND n.is_ad = false
     `;
 
+    if (isSearchMode) {
+      const searchIdx = 2; 
+      query += `
+        AND (
+          n.title ILIKE $${searchIdx} 
+          OR n.short_description ILIKE $${searchIdx} 
+          OR EXISTS (
+            SELECT 1 FROM unnest(n.tags) tag 
+            WHERE tag ILIKE $${searchIdx}
+          )
+        )
+      `;
+    }
+
     if (afterTime) {
-      query += ` AND n.created_at > $${i}`;
+      query += ` AND n.created_at > $${paramIndex}`;
       params.push(afterTime);
-      i++;
+      paramIndex++;
     }
 
     if (category) {
-      query += `
-        AND (
-          SELECT array_agg(LOWER(c))
-          FROM unnest(n.category) c
-        ) && $${i}`;
-      params.push(category);
-      i++;
+      query += ` AND n.category && $${paramIndex}::text[]`; 
+      params.push(category.split(',')); 
+      paramIndex++;
     }
 
-    query += ` ORDER BY n.created_at DESC LIMIT 1000`;
+    if (isSearchMode) {
+      query += ` ORDER BY search_score DESC, n.created_at DESC`;
+    } else {
+      query += ` ORDER BY n.created_at DESC`;
+    }
+
+    query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(parsedLimit, offset);
 
     const result = await pool.query(query, params);
-    const allNews = result.rows;
-
-    const filteredResults = allNews
-      .map((news) => {
-        let score = 0;
-
-        const title = news.title
-          ? news.title.normalize("NFC").toLowerCase()
-          : "";
-        const desc = news.description
-          ? news.description.normalize("NFC").toLowerCase()
-          : "";
-        const tags = Array.isArray(news.tags)
-          ? news.tags.map((t) => t.normalize("NFC").toLowerCase()).join(" ")
-          : "";
-
-        let isMatch = true;
-
-        for (const term of searchTerms) {
-          let termFound = false;
-
-          if (title.includes(term)) {
-            score += 5;
-            termFound = true;
-          }
-          if (desc.includes(term)) {
-            score += 3;
-            termFound = true;
-          }
-          if (tags.includes(term)) {
-            score += 2;
-            termFound = true;
-          }
-
-          if (!termFound) {
-            isMatch = false;
-            break;
-          }
-        }
-
-        return isMatch ? { ...news, searchScore: score } : null;
-      })
-      .filter((item) => item !== null);
-
-    filteredResults.sort((a, b) => {
-      if (b.searchScore !== a.searchScore) return b.searchScore - a.searchScore;
-      if (b.priority_score !== a.priority_score)
-        return b.priority_score - a.priority_score;
-      return new Date(b.created_at) - new Date(a.created_at);
-    });
-
-    const finalData = filteredResults.slice(0, parsedCount);
 
     res.json({
       success: true,
-      count: finalData.length,
-      data: finalData,
+      mode: isSearchMode ? "search" : "browse",
+      page: parsedPage,
+      limit: parsedLimit,
+      count: result.rows.length,
+      data: result.rows,
     });
   } catch (error) {
-    console.error("Search News Error:", error);
+    console.error("Search/Browse News Error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
