@@ -545,6 +545,18 @@ router.get("/public", async (req, res) => {
     const { category = "all", limit = 3 } = req.query;
 
     const parsedLimit = parseInt(limit) || 10;
+    const cacheKey = `public:v1:cat=${category}:limit=${parsedLimit}`;
+    
+    const cached = await getCache(cacheKey);
+    if (cached) {
+    return res.status(200).json({
+    success: true,
+    cached: true,
+    count: cached.length,
+    data: cached,
+    });
+    }
+
 
     let query = `
       SELECT 
@@ -601,6 +613,10 @@ router.get("/public", async (req, res) => {
       title: news.title,
       subtitle: news.subtitle,
     }));
+    // ---- Public featured/breaking news TTL ----
+// Changes occasionally, safe to cache slightly longer
+    await setCache(cacheKey, formatted, 300); // 5 minutes
+
 
     res.status(200).json({
       success: true,
@@ -637,6 +653,12 @@ router.get("/search-news", verifyToken, async (req, res) => {
 
     let scoreCalculation = "0 as search_score";
 
+    const isCacheable =
+    !isSearchMode &&
+    !afterTime &&
+    parsedPage <= 3; // cache only first 3 pages
+    
+
     if (isSearchMode) {
       params.push(`%${cleanQuery}%`);
       scoreCalculation = `
@@ -648,6 +670,12 @@ router.get("/search-news", verifyToken, async (req, res) => {
       `;
       paramIndex++;
     }
+    let cacheKey = null;
+
+  if (isCacheable) {
+    cacheKey = `search:browse:v1:cat=${category || "all"}:page=${parsedPage}:limit=${parsedLimit}`;
+  }
+
 
     let query = `
       SELECT
@@ -713,7 +741,28 @@ router.get("/search-news", verifyToken, async (req, res) => {
     query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(parsedLimit, offset);
 
+    if (cacheKey) {
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    return res.json({
+      success: true,
+      cached: true,
+      mode: "browse",
+      page: parsedPage,
+      limit: parsedLimit,
+      count: cached.length,
+      data: cached,
+    });
+  }
+}
+
+
     const result = await pool.query(query, params);
+    if (cacheKey) {
+      // Browse results change moderately
+      await setCache(cacheKey, result.rows, 120); // 2 minutes
+    }
+
 
     res.json({
       success: true,
