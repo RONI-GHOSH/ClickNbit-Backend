@@ -354,62 +354,78 @@ router.get("/details", verifyToken, async (req, res) => {
 });
 
 router.get("/top10", async (req, res) => {
-    try {
-        const { ads = 0 } = req.query;
-            const fixedLimit = 10;
-                const adLimit = parseInt(ads) || 0;
-                    const userId = req.user?.id || null;
+  try {
+    const { ads = 0 } = req.query;
+    const fixedLimit = 10;
+    const adLimit = parseInt(ads) || 0;
+    const userId = req.user?.id || null;
 
-                        let categories = req.query.category ?? req.query['category[]'] ?? 'all';
-                            if (typeof categories === 'string') categories = [categories];
-                                categories = categories.map(c => c.toLowerCase());
+    let categories = req.query.category ?? req.query['category[]'] ?? 'all';
+    if (typeof categories === 'string') categories = [categories];
+    categories = categories.map(c => c.toLowerCase());
 
-                                    let finalNews = [];
-                                        let lookbackDay = 0;
-                                            const maxLookback = 30;
+    const cached = await getCache(cacheKey);
+  if (cached) {
+    return res.status(200).json({
+    success: true,
+    cached: true,
+    limit: fixedLimit,
+    adsInserted: cached.adsInserted,
+    daysChecked: cached.daysChecked,
+    categories,
+    totalReturned: cached.data.length,
+    data: cached.data,
+    });
+  }
 
-                                                while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
-                                                      const needed = fixedLimit - finalNews.length;
+    let finalNews = [];
+    let lookbackDay = 0;
+    const maxLookback = 30;
+    const cacheKey = `top10:v1:cat=${categories.sort().join(",")}:ads=${adLimit}`;
 
-                                                            const params = [];
-                                                                  let paramIndex = 1;
 
-                                                                        let newsWhereClause = `n.is_active = true`;
+    while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
+      const needed = fixedLimit - finalNews.length;
 
-                                                                              params.push(userId);
-                                                                                    const userIdParam = `$${paramIndex++}`;
+      const params = [];
+      let paramIndex = 1;
 
-                                                                                          
-                                                                                                if (!categories.includes('all')) {
-                                                                                                        newsWhereClause += `
+      let newsWhereClause = `n.is_active = true`;
+
+      params.push(userId);
+      const userIdParam = `$${paramIndex++}`;
+
+
+      if (!categories.includes('all')) {
+        newsWhereClause += `
                                                                                                                   AND EXISTS (
                                                                                                                               SELECT 1
                                                                                                                                           FROM unnest(n.category) c
                                                                                                                                                       WHERE LOWER(c) = ANY($${paramIndex}::text[])
                                                                                                                                                                 )
                                                                                                                                                                         `;
-                                                                                                                                                                                params.push(categories);
-                                                                                                                                                                                        paramIndex++;
-                                                                                                                                                                                              }
+        params.push(categories);
+        paramIndex++;
+      }
 
-                                                                                                                                                                                                    const daysAgoStart = lookbackDay;
-                                                                                                                                                                                                          const daysAgoEnd = lookbackDay + 1;
-                                                                                                                                                                                                                
-                                                                                                                                                                                                                      params.push(daysAgoStart);
-                                                                                                                                                                                                                            const pStart = `$${paramIndex++}`;
-                                                                                                                                                                                                                                  
-                                                                                                                                                                                                                                        params.push(daysAgoEnd);
-                                                                                                                                                                                                                                              const pEnd = `$${paramIndex++}`;
+      const daysAgoStart = lookbackDay;
+      const daysAgoEnd = lookbackDay + 1;
 
-                                                                                                                                                                                                                                                    newsWhereClause += ` 
+      params.push(daysAgoStart);
+      const pStart = `$${paramIndex++}`;
+
+      params.push(daysAgoEnd);
+      const pEnd = `$${paramIndex++}`;
+
+      newsWhereClause += ` 
                                                                                                                                                                                                                                                             AND n.created_at <= NOW() - (${pStart} || ' days')::interval
                                                                                                                                                                                                                                                                     AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
                                                                                                                                                                                                                                                                           `;
 
-                                                                                                                                                                                                                                                                                params.push(needed);
-                                                                                                                                                                                                                                                                                      const pLimit = `$${paramIndex++}`;
+      params.push(needed);
+      const pLimit = `$${paramIndex++}`;
 
-                                                                                                                                                                                                                                                                                            const query = `
+      const query = `
                                                                                                                                                                                                                                                                                                     SELECT 
                                                                                                                                                                                                                                                                                                                n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
                                                                                                                                                                                                                                                                                                                           n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
@@ -438,26 +454,26 @@ router.get("/top10", async (req, res) => {
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       LIMIT ${pLimit}
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             `;
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  const result = await pool.query(query, params);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              if (result.rows.length > 0) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      finalNews = finalNews.concat(result.rows);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            }
+      const result = await pool.query(query, params);
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  lookbackDay++;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      }
+      if (result.rows.length > 0) {
+        finalNews = finalNews.concat(result.rows);
+      }
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          finalNews = finalNews.map((item, index) => ({
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                ...item,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      id: item.news_id,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            description: item.short_description,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  rn: index + 1
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      }));
+      lookbackDay++;
+    }
+
+    finalNews = finalNews.map((item, index) => ({
+      ...item,
+      id: item.news_id,
+      description: item.short_description,
+      rn: index + 1
+    }));
 
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          let adsResult = [];
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              if (adLimit > 0) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    const adsQuery = `
+    let adsResult = [];
+    if (adLimit > 0) {
+      const adsQuery = `
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             SELECT 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       a.ad_id AS id,
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 a.title,
@@ -491,28 +507,39 @@ router.get("/top10", async (req, res) => {
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             ORDER BY a.created_at DESC
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     LIMIT $1
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           `;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    }
+      adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
+    }
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        const finalData = mergeNewsWithAds(finalNews, adsResult);
+    const finalData = mergeNewsWithAds(finalNews, adsResult);
+    // ---- Top10 TTL ----
+// Trending data changes, but not every second
+  await setCache(
+  cacheKey,
+  {
+    data: finalData,
+    adsInserted: adsResult.length,
+    daysChecked: lookbackDay,
+  },
+  120 // 2 minutes
+  );
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            res.status(200).json({
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  success: true,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        limit: fixedLimit,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              adsInserted: adsResult.length,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    daysChecked: lookbackDay,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          categories,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                totalReturned: finalData.length,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      data: finalData,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          });
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            } catch (error) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                console.error("Top10 fetch error:", error);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    res.status(500).json({ success: false, message: "Server error" });
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      });
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
-})
+    res.status(200).json({
+      success: true,
+      limit: fixedLimit,
+      adsInserted: adsResult.length,
+      daysChecked: lookbackDay,
+      categories,
+      totalReturned: finalData.length,
+      data: finalData,
+    });
+
+  } catch (error) {
+    console.error("Top10 fetch error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 router.get("/public", async (req, res) => {
   try {
     const { category = "all", limit = 3 } = req.query;
@@ -588,16 +615,16 @@ router.get("/public", async (req, res) => {
 
 router.get("/search-news", verifyToken, async (req, res) => {
   try {
-    const { 
-      q = "", 
-      page = 1, 
-      limit = 20, 
-      afterTime, 
-      category = null 
+    const {
+      q = "",
+      page = 1,
+      limit = 20,
+      afterTime,
+      category = null
     } = req.query;
 
     const userId = req.user?.id || null;
-    
+
     const parsedPage = parseInt(page) || 1;
     const parsedLimit = parseInt(limit) || 20;
     const offset = (parsedPage - 1) * parsedLimit;
@@ -609,7 +636,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
     let paramIndex = 2;
 
     let scoreCalculation = "0 as search_score";
-    
+
     if (isSearchMode) {
       params.push(`%${cleanQuery}%`);
       scoreCalculation = `
@@ -652,7 +679,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
     `;
 
     if (isSearchMode) {
-      const searchIdx = 2; 
+      const searchIdx = 2;
       query += `
         AND (
           n.title ILIKE $${searchIdx} 
@@ -672,8 +699,8 @@ router.get("/search-news", verifyToken, async (req, res) => {
     }
 
     if (category) {
-      query += ` AND n.category && $${paramIndex}::text[]`; 
-      params.push(category.split(',')); 
+      query += ` AND n.category && $${paramIndex}::text[]`;
+      params.push(category.split(','));
       paramIndex++;
     }
 
@@ -716,7 +743,7 @@ router.get("/banner", verifyToken, async (req, res) => {
     categories = categories.map(c => c.toLowerCase());
 
 
- 
+
 
     const parsedCount = parseInt(count) || 5;
     const parsedAds = parseInt(ads) || 2;
@@ -725,19 +752,19 @@ router.get("/banner", verifyToken, async (req, res) => {
 
     const newsParams = [userId];
     let paramIndex = 2;
-    
+
     const cacheKey = `banner:v1:cat=${categories.sort().join(",")}:count=${parsedCount}:ads=${parsedAds}:after=${afterTime || "none"}`;
     const cached = await getCache(cacheKey);
     if (cached) {
       return res.status(200).json({
-    success: true,
-    cached: true,
-    category,
-    news_count: parsedCount,
-    ads_count: parsedAds,
-    afterTime: afterTime || null,
-    data: cached,
-    });
+        success: true,
+        cached: true,
+        category,
+        news_count: parsedCount,
+        ads_count: parsedAds,
+        afterTime: afterTime || null,
+        data: cached,
+      });
     }
 
 
@@ -928,7 +955,7 @@ router.get("/feed", async (req, res) => {
     }
 
     let newsOrderBy = "";
-    
+
     if (sort === "default") {
       let locationScoreSql = "0";
       if (hasLocation) {
@@ -946,7 +973,7 @@ router.get("/feed", async (req, res) => {
 
       if (prefJson) {
         params.push(prefJson);
-        const pIdx = idx; 
+        const pIdx = idx;
         idx++;
 
         newsOrderBy = `
@@ -975,10 +1002,10 @@ router.get("/feed", async (req, res) => {
         }
       }
     } else {
-        newsOrderBy = ` ORDER BY n.created_at DESC `;
+      newsOrderBy = ` ORDER BY n.created_at DESC `;
     }
-  
-    const limitParamIdx = idx; 
+
+    const limitParamIdx = idx;
     const offsetParamIdx = idx + 1;
     params.push(parsedLimit, newsOffset);
 
