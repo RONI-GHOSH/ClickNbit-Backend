@@ -1,30 +1,42 @@
 const Redis = require("ioredis");
 
-const isProd = process.env.NODE_ENV === "production";
+let valkey;
 
-const valkey = new Redis({
-  host: process.env.VALKEY_HOST,
-  port: Number(process.env.VALKEY_PORT || 6379),
-  password: process.env.VALKEY_PASSWORD || undefined,
+function createRedis() {
+  if (!valkey) {
+    valkey = new Redis({
+      host: process.env.VALKEY_HOST,
+      port: Number(process.env.VALKEY_PORT || 6379),
+      password: process.env.VALKEY_PASSWORD,
 
-  // ---- Production-safe settings ----
-  maxRetriesPerRequest: 2,
-  enableOfflineQueue: false,
-  lazyConnect: true,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 2,
 
-  retryStrategy(times) {
-    return Math.min(times * 50, 2000);
-  },
-});
+      retryStrategy(times) {
+        return Math.min(times * 100, 2000);
+      },
+    });
 
-valkey.on("connect", () => {
-  console.log("✅ Valkey connected");
-});
+    valkey.on("connect", () => {
+      console.log("✅ Valkey connected");
+    });
 
-valkey.on("error", (err) => {
-  console.error("❌ Valkey error:", err.message);
-});
+    valkey.on("error", (err) => {
+      console.error("❌ Valkey error:", err.message);
+    });
+  }
 
-module.exports = {
-  valkey,
-};
+  return valkey;
+}
+
+async function ensureRedis() {
+  const redis = createRedis();
+  if (redis.status !== "ready") {
+    await redis.connect();
+  }
+  return redis;
+}
+
+module.exports = { ensureRedis };
+
