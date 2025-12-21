@@ -68,53 +68,56 @@ async function buildRelevantFeed() {
   const startTime = rows[0].last_run_start;
 
   await pool.query(`
-    INSERT INTO relevant_general_feed (
-      news_id,
-      published_at,
-      relevance_expires_at,
-      engagement_score,
-      priority_score,
-      tags,
-      category,
-      area_names,
-      geo_point,
-      radius_km,
-      is_featured,
-      embedding
-    )
-    SELECT
-      n.news_id,
-      n.created_at,
-      n.created_at + interval '10 days',
-      e.engagement_score,
-      n.priority_score,
-      n.tags,
-      n.category,
-      n.area_names,
-      n.geo_point,
-      n.radius_km,
-      n.is_featured,
-      n.embedding
-    FROM news n
-    JOIN news_engagement_agg e ON e.news_id = n.news_id
-    WHERE n.created_at >= $1 - interval '10 days'
-      AND n.created_at <  $1
-      AND n.is_active = true
-      AND n.is_ad = false
-    ON CONFLICT (news_id)
-    DO UPDATE SET
-      engagement_score = EXCLUDED.engagement_score,
-      priority_score   = EXCLUDED.priority_score,
-      updated_at       = now();
-  `, [startTime]);
+  INSERT INTO relevant_general_feed (
+    news_id,
+    published_at,
+    relevance_expires_at,
+    engagement_score,
+    priority_score,
+    tags,
+    category,
+    area_names,
+    geo_point,
+    radius_km,
+    is_featured,
+    embedding
+  )
+  SELECT
+    n.news_id,
+    n.created_at,
+    n.created_at + interval '10 days',
+    e.engagement_score,
+    n.priority_score,
+    n.tags,
+    n.category,
+    n.area_names,
+    n.geo_point,
+    n.radius_km,
+    n.is_featured,
+    n.embedding
+  FROM news n
+  JOIN news_engagement_agg e ON e.news_id = n.news_id
+  WHERE n.created_at >= ($1::timestamp - interval '10 days')
+    AND n.created_at <  ($1::timestamp)
+    AND n.is_active = true
+    AND n.is_ad = false
+  ON CONFLICT (news_id)
+  DO UPDATE SET
+    engagement_score = EXCLUDED.engagement_score,
+    priority_score   = EXCLUDED.priority_score,
+    updated_at       = now();
+`, [startTime]);
+
 
   await pool.query(`
-    UPDATE feed_run_state
-    SET last_run_start = $1 - interval '10 days',
-        last_run_end   = $1,
-        last_run_at    = now()
-    WHERE feed_type = 'relevant'
-  `, [startTime]);
+  UPDATE feed_run_state
+  SET
+    last_run_start = ($1::timestamp - interval '10 days'),
+    last_run_end   = ($1::timestamp),
+    last_run_at    = now()
+  WHERE feed_type = 'relevant'
+`, [startTime]);
+
 }
 
 export {
