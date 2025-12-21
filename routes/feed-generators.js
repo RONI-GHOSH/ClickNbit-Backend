@@ -1,12 +1,11 @@
-const db = require("../config/db");
 const pool = require("../config/db");
 async function refreshEngagement() {
-    await db.query(`
+    await pool.query(`
       REFRESH MATERIALIZED VIEW CONCURRENTLY news_engagement_agg
     `);
   }
 async function buildRecentFeed() {
-    await db.query(`
+    await pool.query(`
       INSERT INTO recent_general_feed (
         news_id,
         published_at,
@@ -49,7 +48,7 @@ async function buildRecentFeed() {
         priority_score   = EXCLUDED.priority_score,
         updated_at       = now();
     `);
-    await db.query(`
+    await pool.query(`
     UPDATE feed_run_state
     SET last_run_start = now(),
        last_run_start = now() - interval '72 hours',
@@ -60,7 +59,7 @@ async function buildRecentFeed() {
   }
     
 async function buildRelevantFeed() {
-  const { rows } = await db.query(`
+  const { rows } = await pool.query(`
     SELECT last_run_start
     FROM feed_run_state
     WHERE feed_type = 'recent'
@@ -68,7 +67,7 @@ async function buildRelevantFeed() {
 
   const startTime = rows[0].last_run_start;
 
-  await db.query(`
+  await pool.query(`
     INSERT INTO relevant_general_feed (
       news_id,
       published_at,
@@ -109,7 +108,7 @@ async function buildRelevantFeed() {
       updated_at       = now();
   `, [startTime]);
 
-  await db.query(`
+  await pool.query(`
     UPDATE feed_run_state
     SET last_run_start = $1 - interval '10 days',
         last_run_end   = $1,
