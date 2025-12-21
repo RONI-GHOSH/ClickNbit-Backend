@@ -116,7 +116,7 @@ async function buildRelevantFeed() {
   `, [startTime]);
 }
 
-  export {
+export {
     refreshEngagement,
     buildRecentFeed,
     buildRelevantFeed

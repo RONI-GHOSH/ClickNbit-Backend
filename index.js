@@ -21,6 +21,8 @@ const engagementRoutes = require('./routes/engagement.routes');
 const advertisementsRoutes = require('./routes/advertisements.routes');
 const autosaveRoutes = require('./routes/autosave.routes');
 const saveRoutes = require('./routes/save.routes');
+const cronRoutes = require('./routes/feed-cron');
+// const internalFeedRoutes = require('./routes/feed-apis');
 
 // Initialize express app
 const app = express();
@@ -47,7 +49,8 @@ app.use('/api/engagements', engagementRoutes);
 app.use('/api/advertisements', advertisementsRoutes);
 app.use('/api/autosave', autosaveRoutes);
 app.use('/api/save', saveRoutes);
-
+app.use('/api/cron', cronRoutes);
+// app.use('/api/internal-feed', internalFeedRoutes);
 // Root route
 app.get('/', (req, res) => {
   res.json({ message: 'Welcome to ClickNbit News API' });
