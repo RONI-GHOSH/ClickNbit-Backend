@@ -364,7 +364,14 @@ router.get("/top10", async (req, res) => {
     if (typeof categories === 'string') categories = [categories];
     categories = categories.map(c => c.toLowerCase());
 
-    const cached = await getCache(cacheKey);
+
+
+    let finalNews = [];
+    let lookbackDay = 0;
+    const maxLookback = 30;
+    const cacheKey = `top10:v1:cat=${categories.sort().join(",")}:ads=${adLimit}`;
+
+        const cached = await getCache(cacheKey);
   if (cached) {
     return res.status(200).json({
     success: true,
@@ -377,11 +384,6 @@ router.get("/top10", async (req, res) => {
     data: cached.data,
     });
   }
-
-    let finalNews = [];
-    let lookbackDay = 0;
-    const maxLookback = 30;
-    const cacheKey = `top10:v1:cat=${categories.sort().join(",")}:ads=${adLimit}`;
 
 
     while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
