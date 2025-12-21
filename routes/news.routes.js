@@ -267,7 +267,6 @@ router.delete("/:news_id", verifyAdmin, async (req, res) => {
   }
 });
 
-const { getCache, setCache } = require("../cache/cache");
 
 router.get("/details", verifyToken, async (req, res) => {
   try {
