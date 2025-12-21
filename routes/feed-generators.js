@@ -50,7 +50,7 @@ async function buildRecentFeed() {
     `);
     await pool.query(`
     UPDATE feed_run_state
-    SET last_run_start = now(),
+    SET last_run_at = now(),
        last_run_start = now() - interval '72 hours',
        last_run_end   = now() - interval '6 hours'
     WHERE feed_type = 'recent'
