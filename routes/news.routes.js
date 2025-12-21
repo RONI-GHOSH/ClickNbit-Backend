@@ -267,6 +267,8 @@ router.delete("/:news_id", verifyAdmin, async (req, res) => {
   }
 });
 
+const { getCache, setCache } = require("../cache/cache");
+
 router.get("/details", verifyToken, async (req, res) => {
   try {
     const { news_id } = req.query;
@@ -279,6 +281,27 @@ router.get("/details", verifyToken, async (req, res) => {
       });
     }
 
+    // ---- Cache key (user-aware) ----
+    const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"}`;
+
+    // ---- Try cache (FAIL-OPEN) ----
+    let cached = null;
+    try {
+      cached = await getCache(cacheKey);
+    } catch (e) {
+      console.warn("⚠️ Details cache skipped:", e.message);
+    }
+
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        cached: true,
+        data: cached.data,
+        astonAd: cached.astonAd,
+      });
+    }
+
+    // ---- DB query ----
     const query = `
       SELECT 
         n.news_id AS id,
@@ -313,7 +336,6 @@ router.get("/details", verifyToken, async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $2
       LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $2
-      
       WHERE n.news_id = $1 AND n.is_active = true
       LIMIT 1
     `;
@@ -335,14 +357,24 @@ router.get("/details", verifyToken, async (req, res) => {
       FROM advertisements a
       WHERE a.is_active = true AND a.format_id = 1
       ORDER BY RANDOM()
-      LIMIT 1
-    `
+      LIMIT 1`
     );
+
+    const responsePayload = {
+      data: result.rows[0],
+      astonAd: astads.rows[0] || null,
+    };
+
+    // ---- Cache for 5 minutes (300s) ----
+    try {
+      await setCache(cacheKey, responsePayload, 300);
+    } catch (e) {
+      console.warn("⚠️ Details cache set skipped:", e.message);
+    }
 
     res.status(200).json({
       success: true,
-      data: result.rows[0],
-      astonAd: astads.rows[0],
+      ...responsePayload,
     });
   } catch (err) {
     console.error("Details API error:", err);
@@ -352,6 +384,93 @@ router.get("/details", verifyToken, async (req, res) => {
     });
   }
 });
+
+
+// router.get("/details", verifyToken, async (req, res) => {
+//   try {
+//     const { news_id } = req.query;
+//     const userId = req.user?.id || null;
+
+//     if (!news_id) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "news_id is required",
+//       });
+//     }
+
+//     const query = `
+//       SELECT 
+//         n.news_id AS id,
+//         n.title,
+//         n.short_description AS description,
+//         n.content_url,
+//         n.redirect_url,
+//         n.is_featured,
+//         n.is_breaking,
+//         n.category,
+//         n.tags,
+//         n.is_ad,
+//         n.type_id,
+//         n.created_at,
+//         n.updated_at,
+//         n.area_type,
+//         n.priority_score,
+//         n.fullscreen,
+
+//         COALESCE(v.view_count, 0) AS view_count,
+//         COALESCE(l.like_count, 0) AS like_count,
+//         COALESCE(c.comment_count, 0) AS comment_count,
+//         COALESCE(s.share_count, 0) AS share_count,
+
+//         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+//         CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+
+//       FROM news n
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+//       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $2
+//       LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $2
+      
+//       WHERE n.news_id = $1 AND n.is_active = true
+//       LIMIT 1
+//     `;
+
+//     const result = await db.query(query, [news_id, userId]);
+
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "News not found",
+//       });
+//     }
+
+//     const astads = await db.query(
+//       `SELECT 
+//         a.ad_id AS id,
+//         a.content_url,
+//         a.redirect_url
+//       FROM advertisements a
+//       WHERE a.is_active = true AND a.format_id = 1
+//       ORDER BY RANDOM()
+//       LIMIT 1
+//     `
+//     );
+
+//     res.status(200).json({
+//       success: true,
+//       data: result.rows[0],
+//       astonAd: astads.rows[0],
+//     });
+//   } catch (err) {
+//     console.error("Details API error:", err);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// });
 
 router.get("/top10", async (req, res) => {
   try {
@@ -371,7 +490,7 @@ router.get("/top10", async (req, res) => {
     const maxLookback = 30;
     const cacheKey = `top10:v1:cat=${categories.sort().join(",")}:ads=${adLimit}`;
 
-        const cached = await getCache(cacheKey);
+    const cached = await getCache(cacheKey);
   if (cached) {
     return res.status(200).json({
     success: true,
