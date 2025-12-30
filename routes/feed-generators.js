@@ -120,7 +120,7 @@ async function buildRelevantFeed() {
 
 }
 
-export {
+module.exports = {
     refreshEngagement,
     buildRecentFeed,
     buildRelevantFeed
