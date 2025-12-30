@@ -61,7 +61,14 @@ async function uploadToR2(buffer, filename, mimetype, folder) {
   const finalFolder = folder || defaultFolder;
 
   const ext = path.extname(filename) || "";
-  const baseName = filename ? filename.replace(ext, "") : Date.now();
+  const cleanName = filename
+    .replace(ext, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  const baseName = cleanName || Date.now();
 
   const key = `${finalFolder}/${Date.now()}-${baseName}${ext}`;
 
