@@ -1,7 +1,5 @@
 const multer = require("multer");
 const { Readable } = require("stream");
-const { Upload } = require("@aws-sdk/lib-storage");
-const { S3Client } = require("@aws-sdk/client-s3");
 const cloudinary = require("../config/cloudinary");
 const r2 = require("../config/r2");
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
@@ -54,11 +52,11 @@ async function uploadToCloudinary(buffer, mimetype, folder, filename) {
 }
 
 
-async function uploadToR2Stream(fileStream, filename, mimetype, folder) {
-  let defaultFolder = "raw";
-
-  if (mimetype.startsWith("image/")) defaultFolder = "images/original";
-  else if (mimetype.startsWith("video/")) defaultFolder = "videos/original";
+async function uploadToR2(buffer, filename, mimetype, folder) {
+  let defaultFolder = "others";
+  if (mimetype.startsWith("image/original")) defaultFolder = "images";
+  else if (mimetype.startsWith("video/original")) defaultFolder = "video";
+  else defaultFolder = "raw";
 
   const finalFolder = folder || defaultFolder;
 
@@ -71,20 +69,18 @@ async function uploadToR2Stream(fileStream, filename, mimetype, folder) {
     .replace(/^_+|_+$/g, "");
 
   const baseName = cleanName || Date.now();
-  const key = `${finalFolder}/${Date.now()}_${baseName}${ext}`;
 
-  const upload = new Upload({
-    client: r2,
-    params: {
+  const key = `${finalFolder}/${Date.now()}-${baseName}${ext}`;
+
+  await r2.send(
+    new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
       Key: key,
-      Body: fileStream,
+      Body: buffer,
       ContentType: mimetype,
-      ACL: "public-read"
-    },
-  });
-
-  await upload.done();
+      ACL: "public-read",
+    })
+  );
 
   return {
     url: `${process.env.R2_PUBLIC_URL}/${key}`,
@@ -93,22 +89,23 @@ async function uploadToR2Stream(fileStream, filename, mimetype, folder) {
   };
 }
 
+
+
+// ====================== MAIN MIDDLEWARE ======================
 const uploadFile = async (req, res, next) => {
   if (!req.file) return next();
 
   try {
-    const { originalname, mimetype, buffer } = req.file;
+    const { buffer, originalname, mimetype } = req.file;
 
-    const storage = req.query.storage || req.body.storage || "r2";
+    const storage = req.query.storage || req.body.storage || "r2"; // default r2
     const folder = req.body.folder || req.query.folder || null;
     const filename = req.body.filename || req.query.filename || originalname;
-
-    const fileStream = Readable.from(buffer); // Convert to stream for R2
 
     let result;
 
     if (storage === "r2") {
-      result = await uploadToR2Stream(fileStream, filename, mimetype, folder);
+      result = await uploadToR2(buffer, filename, mimetype, folder);
     } else {
       result = await uploadToCloudinary(buffer, mimetype, folder, filename);
     }
@@ -117,77 +114,9 @@ const uploadFile = async (req, res, next) => {
     next();
   } catch (error) {
     console.error("Upload error:", error);
-    res.status(500).json({ success: false, message: "Upload failed", error: error.message });
+    res.status(500).json({ success: false, message: "Upload failed" });
   }
 };
-
-
-
-// async function uploadToR2(buffer, filename, mimetype, folder) {
-//   let defaultFolder = "others";
-//   if (mimetype.startsWith("image/original/")) defaultFolder = "images";
-//   else if (mimetype.startsWith("video/original/")) defaultFolder = "video";
-//   else defaultFolder = "raw";
-
-//   const finalFolder = folder || defaultFolder;
-
-//   const ext = path.extname(filename) || "";
-//   const cleanName = filename
-//     .replace(ext, "")
-//     .toLowerCase()
-//     .replace(/[^a-z0-9]+/g, "_")
-//     .replace(/_+/g, "_")
-//     .replace(/^_+|_+$/g, "");
-
-//   const baseName = cleanName || Date.now();
-
-//   const key = `${finalFolder}/${Date.now()}-${baseName}${ext}`;
-
-//   await r2.send(
-//     new PutObjectCommand({
-//       Bucket: process.env.R2_BUCKET_NAME,
-//       Key: key,
-//       Body: buffer,
-//       ContentType: mimetype,
-//       ACL: "public-read",
-//     })
-//   );
-
-//   return {
-//     url: `${process.env.R2_PUBLIC_URL}/${key}`,
-//     key,
-//     bucket: process.env.R2_BUCKET_NAME,
-//   };
-// }
-
-
-
-// ====================== MAIN MIDDLEWARE ======================
-// const uploadFile = async (req, res, next) => {
-//   if (!req.file) return next();
-
-//   try {
-//     const { buffer, originalname, mimetype } = req.file;
-
-//     const storage = req.query.storage || req.body.storage || "r2"; // default r2
-//     const folder = req.body.folder || req.query.folder || null;
-//     const filename = req.body.filename || req.query.filename || originalname;
-
-//     let result;
-
-//     if (storage === "r2") {
-//       result = await uploadToR2(buffer, filename, mimetype, folder);
-//     } else {
-//       result = await uploadToCloudinary(buffer, mimetype, folder, filename);
-//     }
-
-//     req.uploadResult = result;
-//     next();
-//   } catch (error) {
-//     console.error("Upload error:", error);
-//     res.status(500).json({ success: false, message: "Upload failed" });
-//   }
-// };
 
 
 module.exports = { upload, uploadFile };
