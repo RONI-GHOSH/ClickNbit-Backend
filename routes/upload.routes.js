@@ -41,7 +41,7 @@ const responseHandler = (req, res) => {
 // IMAGE UPLOAD (R2 default folder = images/original)
 router.post(
   '/image',
-  verifyAdmin,
+  // verifyAdmin,
   (req, res, next) => { req.body.folder = req.body.folder || 'images/original'; next(); },
   upload.single('image'),
   uploadFile,
@@ -52,7 +52,7 @@ router.post(
 // VIDEO UPLOAD (R2 default folder = videos/original)
 router.post(
   '/video',
-  verifyAdmin,
+  // verifyAdmin,
   (req, res, next) => { req.body.folder = req.body.folder || 'videos/original'; next(); },
   upload.single('video'),
   uploadFile,
