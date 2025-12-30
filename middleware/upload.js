@@ -54,8 +54,8 @@ async function uploadToCloudinary(buffer, mimetype, folder, filename) {
 
 async function uploadToR2(buffer, filename, mimetype, folder) {
   let defaultFolder = "others";
-  if (mimetype.startsWith("image/")) defaultFolder = "images";
-  else if (mimetype.startsWith("video/")) defaultFolder = "video";
+  if (mimetype.startsWith("image/original/")) defaultFolder = "images";
+  else if (mimetype.startsWith("video/original/")) defaultFolder = "video";
   else defaultFolder = "raw";
 
   const finalFolder = folder || defaultFolder;
