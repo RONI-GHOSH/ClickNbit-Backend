@@ -802,7 +802,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
         n.news_id AS id, n.title, n.short_description AS description, 
         n.content_url, n.redirect_url, n.is_featured, n.category, 
         n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, 
-        n.created_at, n.priority_score,
+        n.created_at, n.priority_score, n.vertical_content_url, n.square_content_url, n.compressed_content_url,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
