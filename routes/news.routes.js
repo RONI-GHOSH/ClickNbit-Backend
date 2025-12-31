@@ -1087,6 +1087,11 @@ router.get("/feed", async (req, res) => {
 
     let newsWhere = `n.is_active = true`;
 
+    // Filter out news already viewed by user
+    newsWhere += ` AND n.news_id NOT IN (
+      SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false
+    )`;
+
     if (type !== "all") {
       newsWhere += ` AND n.type_id = $${idx}`;
       params.push(type);
@@ -1156,6 +1161,35 @@ router.get("/feed", async (req, res) => {
     `);
     const totalAdsFormat1 = parseInt(adsCountRes.rows[0]?.total || 0);
 
+    // Build ads ordering based on location for format_id=1
+    let adsOrderClause = `
+      ORDER BY (
+        (a.view_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
+        (a.click_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.3 + 
+        (a.like_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.2 + 
+        (a.share_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.1 +
+        (EXTRACT(EPOCH FROM (a.end_at - NOW())) / 86400) * -0.005 +
+        (COALESCE(a.priority_score, 0) * 0.1)
+    `;
+
+    if (hasLocation) {
+      adsOrderClause += `
+        + (CASE 
+          WHEN a.geo_point IS NOT NULL THEN
+            1 / (1 + (ST_DistanceSphere(
+              a.geo_point::geometry,
+              ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+            ) / 8000))
+          ELSE 0
+        END * 5)
+      `;
+    }
+
+    adsOrderClause += `) DESC`;
+
+    // Calculate circular offset for format_id=1 ads
+    const circularAdsOffset = totalAdsFormat1 > 0 ? adsOffset % totalAdsFormat1 : 0;
+
     const mainQuery = `
       WITH news_batch AS (
         SELECT 
@@ -1188,18 +1222,14 @@ router.get("/feed", async (req, res) => {
                     ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
                     (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
                     (COALESCE(priority_score, 0) * 0.1)
-                    ${
-                      hasLocation
-                        ? `+ (CASE 
+                    ${hasLocation ? `+ (CASE 
                       WHEN geo_point IS NOT NULL THEN
                         1 / (1 + (ST_DistanceSphere(
                           geo_point::geometry,
                           ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
                         ) / 8000))
                       ELSE 0
-                    END * 5)`
-                        : ""
-                    }
+                    END * 5)` : ''}
                 ) DESC
             ) as global_rn
         FROM advertisements
@@ -1213,10 +1243,10 @@ router.get("/feed", async (req, res) => {
           ad_id, 
           content_url, 
           redirect_url,
+          global_rn,
           ROW_NUMBER() OVER (ORDER BY global_rn) as rn
         FROM ads_all
-        WHERE global_rn > ${adsOffset} OR global_rn <= (${adsOffset} % GREATEST((SELECT COUNT(*) FROM ads_all), 1))
-        LIMIT $${limitParamIdx}
+        LIMIT $${limitParamIdx} OFFSET ${circularAdsOffset}
       )
 
       SELECT 
@@ -1240,9 +1270,18 @@ router.get("/feed", async (req, res) => {
         nb.is_liked,
         nb.is_saved,
 
-        CASE WHEN RANDOM() < 0.8 THEN ab.ad_id ELSE NULL END as aston_news_id, 
-        CASE WHEN RANDOM() < 0.8 THEN ab.content_url ELSE NULL END as bottom_ad_content_url, 
-        CASE WHEN RANDOM() < 0.8 THEN ab.redirect_url ELSE NULL END as bottom_ad_redirect_url
+        CASE 
+          WHEN RANDOM() < 0.8 AND ab.ad_id IS NOT NULL THEN ab.ad_id 
+          ELSE NULL 
+        END as aston_news_id, 
+        CASE 
+          WHEN RANDOM() < 0.8 AND ab.ad_id IS NOT NULL THEN ab.content_url 
+          ELSE NULL 
+        END as bottom_ad_content_url, 
+        CASE 
+          WHEN RANDOM() < 0.8 AND ab.ad_id IS NOT NULL THEN ab.redirect_url 
+          ELSE NULL 
+        END as bottom_ad_redirect_url
 
       FROM news_batch nb
       LEFT JOIN ads_batch ab ON nb.rn = ab.rn
@@ -1261,6 +1300,10 @@ router.get("/feed", async (req, res) => {
     `);
     const totalAdsFormat2 = parseInt(adsFormat2CountRes.rows[0]?.total || 0);
 
+    // Calculate circular offset for format_id=2 ads
+    const circularAdsOffset2 = totalAdsFormat2 > 0 ? adsOffset % totalAdsFormat2 : 0;
+
+    // Build query for format_id=2 ads with same ordering
     let adQuery = `
       WITH ads_all AS (
         SELECT
@@ -1288,18 +1331,14 @@ router.get("/feed", async (req, res) => {
               ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
               (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
               (COALESCE(priority_score, 0) * 0.1)
-              ${
-                hasLocation
-                  ? `+ (CASE 
+              ${hasLocation ? `+ (CASE 
                 WHEN geo_point IS NOT NULL THEN
                   1 / (1 + (ST_DistanceSphere(
                     geo_point::geometry,
                     ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
                   ) / 8000))
                 ELSE 0
-              END * 5)`
-                  : ""
-              }
+              END * 5)` : ''}
             ) DESC
           ) as global_rn
         FROM advertisements a
