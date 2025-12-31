@@ -1069,7 +1069,7 @@ router.get("/feed", async (req, res) => {
       currentPage = 1,
     } = req.query;
 
-    const userId = 27//req.user.id;
+    const userId = 27; //req.user.id;
     const parsedLimit = parseInt(limit) || 10;
     const parsedAds = parseInt(ads) || 1;
     const page = parseInt(currentPage) || 1;
@@ -1081,27 +1081,13 @@ router.get("/feed", async (req, res) => {
     const newsOffset = (page - 1) * parsedLimit;
     const adsOffset = (page - 1) * parsedAds;
 
-    let prefJson = null;
-    const prefRes = await db.query(
-      `SELECT 
-        clicked_news_category,
-        skipped_news_category,
-        preferred_news_type,
-        user_locations
-      FROM preferences 
-      WHERE user_id = $1 LIMIT 1`,
-      [userId]
-    );
-
-    if (prefRes.rows.length) prefJson = prefRes.rows[0];
-
     const params = [userId];
     let idx = 2;
 
     let newsWhere = `n.is_active = true`;
 
     if (type !== "all") {
-      newsWhere += ` AND n.type_id = $${idx} `;
+      newsWhere += ` AND n.type_id = $${idx}`;
       params.push(type);
       idx++;
     }
@@ -1111,14 +1097,14 @@ router.get("/feed", async (req, res) => {
         AND (
           SELECT array_agg(LOWER(c))
           FROM unnest(n.category) c
-        ) && $${idx} 
+        ) && $${idx}
       `;
       params.push(category);
       idx++;
     }
 
     if (afterTime) {
-      newsWhere += ` AND n.created_at > $${idx} `;
+      newsWhere += ` AND n.created_at > $${idx}`;
       params.push(new Date(afterTime));
       idx++;
     }
@@ -1126,57 +1112,48 @@ router.get("/feed", async (req, res) => {
     let newsOrderBy = "";
 
     if (sort === "default") {
-      let locationScoreSql = "0";
       if (hasLocation) {
-        locationScoreSql = `
-          (CASE 
-            WHEN n.geo_point IS NOT NULL THEN
-              1 / (1 + (ST_DistanceSphere(
-                n.geo_point::geometry,
-                ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
-              ) / 8000))
-            ELSE 0
-          END * 10)
-        `;
-      }
-
-      if (prefJson) {
-        params.push(prefJson);
-        const pIdx = idx;
-        idx++;
-
+        // Sort by time + location + priority
         newsOrderBy = `
           ORDER BY (
-              ${locationScoreSql}
-              +
-              (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'clicked_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.1) 
-              +
-              (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'skipped_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.5)
-              +
-              (CASE WHEN ($${pIdx}::jsonb->>'preferred_news_type') = n.area_type THEN 2 ELSE 0 END)
-              +
-              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
+            ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.01) +
+            (CASE 
+              WHEN n.geo_point IS NOT NULL THEN
+                1 / (1 + (ST_DistanceSphere(
+                  n.geo_point::geometry,
+                  ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+                ) / 8000))
+              ELSE 0
+            END * 10) +
+            (COALESCE(n.priority_score, 0) * 0.5)
           ) DESC
         `;
       } else {
-        if (hasLocation) {
-          newsOrderBy = `
-            ORDER BY (
-              ${locationScoreSql} + 
-              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
-            ) DESC 
-          `;
-        } else {
-          newsOrderBy = ` ORDER BY n.created_at DESC `;
-        }
+        // Sort by time + priority only
+        newsOrderBy = `
+          ORDER BY (
+            ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.01) +
+            (COALESCE(n.priority_score, 0) * 0.5)
+          ) DESC
+        `;
       }
     } else {
-      newsOrderBy = ` ORDER BY n.created_at DESC `;
+      newsOrderBy = ` ORDER BY n.created_at DESC`;
     }
 
     const limitParamIdx = idx;
     const offsetParamIdx = idx + 1;
     params.push(parsedLimit, newsOffset);
+
+    // Get total count of format_id=1 ads for circular repetition
+    const adsCountRes = await db.query(`
+      SELECT COUNT(*) as total 
+      FROM advertisements 
+      WHERE format_id = 1 
+        AND is_active = true 
+        AND end_at > NOW()
+    `);
+    const totalAdsFormat1 = parseInt(adsCountRes.rows[0]?.total || 0);
 
     const mainQuery = `
       WITH news_batch AS (
@@ -1201,22 +1178,40 @@ router.get("/feed", async (req, res) => {
         LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
       ),
 
-      ads_batch AS (
+      ads_all AS (
         SELECT 
             ad_id, content_url, redirect_url,
             ROW_NUMBER() OVER (
                 ORDER BY (
-                    (view_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
-                    (click_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.3 + 
-                    (like_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.2 + 
-                    (share_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.1
+                    ((view_target - COALESCE(view_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
+                    ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
+                    (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
+                    (COALESCE(priority_score, 0) * 0.1)
+                    ${hasLocation ? `+ (CASE 
+                      WHEN geo_point IS NOT NULL THEN
+                        1 / (1 + (ST_DistanceSphere(
+                          geo_point::geometry,
+                          ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+                        ) / 8000))
+                      ELSE 0
+                    END * 5)` : ''}
                 ) DESC
-            ) as rn
+            ) as global_rn
         FROM advertisements
         WHERE format_id = 1 
           AND is_active = true 
           AND end_at > NOW()
-        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+      ),
+      
+      ads_batch AS (
+        SELECT 
+          ad_id, 
+          content_url, 
+          redirect_url,
+          ROW_NUMBER() OVER (ORDER BY global_rn) as rn
+        FROM ads_all
+        WHERE global_rn > ${adsOffset} OR global_rn <= (${adsOffset} % GREATEST((SELECT COUNT(*) FROM ads_all), 1))
+        LIMIT $${limitParamIdx}
       )
 
       SELECT 
@@ -1240,9 +1235,9 @@ router.get("/feed", async (req, res) => {
         nb.is_liked,
         nb.is_saved,
 
-        ab.ad_id as aston_news_id, 
-        ab.content_url as bottom_ad_content_url, 
-        ab.redirect_url as bottom_ad_redirect_url
+        CASE WHEN RANDOM() < 0.8 THEN ab.ad_id ELSE NULL END as aston_news_id, 
+        CASE WHEN RANDOM() < 0.8 THEN ab.content_url ELSE NULL END as bottom_ad_content_url, 
+        CASE WHEN RANDOM() < 0.8 THEN ab.redirect_url ELSE NULL END as bottom_ad_redirect_url
 
       FROM news_batch nb
       LEFT JOIN ads_batch ab ON nb.rn = ab.rn
@@ -1251,59 +1246,87 @@ router.get("/feed", async (req, res) => {
 
     const newsRes = await db.query(mainQuery, params);
 
+    // Get total count of format_id=2 ads for circular repetition
+    const adsFormat2CountRes = await db.query(`
+      SELECT COUNT(*) as total 
+      FROM advertisements 
+      WHERE format_id = 2 
+        AND is_active = true 
+        AND end_at > NOW()
+    `);
+    const totalAdsFormat2 = parseInt(adsFormat2CountRes.rows[0]?.total || 0);
+
     let adQuery = `
-      SELECT
-        a.ad_id AS id,
-        a.title,
-        a.description,
-        a.content_url,
-        a.redirect_url,
-        a.is_featured,
-        a.category,
-        a.is_ad,
-        a.type_id,
-        a.target_tags as tags,
-        a.updated_at,
-        a.fullscreen,
-        COALESCE(v.view_count, 0) AS view_count,
-        COALESCE(l.like_count, 0) AS like_count,
-        COALESCE(c.comment_count, 0) AS comment_count,
-        COALESCE(s.share_count, 0) AS share_count,
-        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-      FROM advertisements a
-      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
-      LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
-      LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
-      LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
-      LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $1
-      LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
-      WHERE a.is_active = true AND a.format_id = 2
+      WITH ads_all AS (
+        SELECT
+          a.ad_id AS id,
+          a.title,
+          a.description,
+          a.content_url,
+          a.redirect_url,
+          a.is_featured,
+          a.category,
+          a.is_ad,
+          a.type_id,
+          a.target_tags as tags,
+          a.updated_at,
+          a.fullscreen,
+          COALESCE(v.view_count, 0) AS view_count,
+          COALESCE(l.like_count, 0) AS like_count,
+          COALESCE(c.comment_count, 0) AS comment_count,
+          COALESCE(s.share_count, 0) AS share_count,
+          CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+          CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved,
+          ROW_NUMBER() OVER (
+            ORDER BY (
+              ((view_target - COALESCE(view_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
+              ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
+              (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
+              (COALESCE(priority_score, 0) * 0.1)
+              ${hasLocation ? `+ (CASE 
+                WHEN geo_point IS NOT NULL THEN
+                  1 / (1 + (ST_DistanceSphere(
+                    geo_point::geometry,
+                    ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+                  ) / 8000))
+                ELSE 0
+              END * 5)` : ''}
+            ) DESC
+          ) as global_rn
+        FROM advertisements a
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+        LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $1
+        LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
+        WHERE a.is_active = true 
+          AND a.format_id = 2
+          AND a.end_at > NOW()
+      )
+      SELECT *
+      FROM ads_all
+      WHERE global_rn > ${adsOffset} OR global_rn <= (${adsOffset} % GREATEST((SELECT COUNT(*) FROM ads_all), 1))
+      LIMIT ${parsedAds}
     `;
-
-    if (hasLocation) {
-      adQuery += `
-        ORDER BY
-          (priority_score * 0.6) +
-          (CASE 
-            WHEN geo_point IS NOT NULL THEN
-              1 / (1 + (ST_DistanceSphere(
-                geo_point::geometry,
-                ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
-              ) / 8000))
-            ELSE 0
-          END * 10)
-        DESC
-      `;
-    } else {
-      adQuery += ` ORDER BY priority_score DESC `;
-    }
-
-    adQuery += ` LIMIT ${parsedAds} OFFSET ${adsOffset} `;
 
     const adsRes = await db.query(adQuery, [userId]);
 
-    const finalData = mergeNewsWithAds(newsRes.rows, adsRes.rows);
+    // Insert format_id=2 ads at positions 2-3 in every 10 items
+    const finalData = [];
+    const adsToInsert = adsRes.rows;
+    let adsIndex = 0;
+
+    for (let i = 0; i < newsRes.rows.length; i++) {
+      finalData.push(newsRes.rows[i]);
+      
+      // Insert 2-3 ads at positions 2-3 in every 10 items
+      const positionInTen = (i + 1) % 10;
+      if ((positionInTen === 2 || positionInTen === 3) && adsIndex < adsToInsert.length) {
+        finalData.push(adsToInsert[adsIndex]);
+        adsIndex++;
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -1321,6 +1344,273 @@ router.get("/feed", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+// router.get("/feed", async (req, res) => {
+//   try {
+//     const {
+//       type = "all",
+//       sort = "default",
+//       limit = 10,
+//       ads = 1,
+//       lat,
+//       lng,
+//       category,
+//       afterTime,
+//       currentPage = 1,
+//     } = req.query;
+
+//     const userId = 27//req.user.id;
+//     const parsedLimit = parseInt(limit) || 10;
+//     const parsedAds = parseInt(ads) || 1;
+//     const page = parseInt(currentPage) || 1;
+
+//     const userLat = parseFloat(lat);
+//     const userLng = parseFloat(lng);
+//     const hasLocation = !isNaN(userLat) && !isNaN(userLng);
+
+//     const newsOffset = (page - 1) * parsedLimit;
+//     const adsOffset = (page - 1) * parsedAds;
+
+//     let prefJson = null;
+//     const prefRes = await db.query(
+//       `SELECT 
+//         clicked_news_category,
+//         skipped_news_category,
+//         preferred_news_type,
+//         user_locations
+//       FROM preferences 
+//       WHERE user_id = $1 LIMIT 1`,
+//       [userId]
+//     );
+
+//     if (prefRes.rows.length) prefJson = prefRes.rows[0];
+
+//     const params = [userId];
+//     let idx = 2;
+
+//     let newsWhere = `n.is_active = true`;
+
+//     if (type !== "all") {
+//       newsWhere += ` AND n.type_id = $${idx} `;
+//       params.push(type);
+//       idx++;
+//     }
+
+//     if (category) {
+//       newsWhere += `
+//         AND (
+//           SELECT array_agg(LOWER(c))
+//           FROM unnest(n.category) c
+//         ) && $${idx} 
+//       `;
+//       params.push(category);
+//       idx++;
+//     }
+
+//     if (afterTime) {
+//       newsWhere += ` AND n.created_at > $${idx} `;
+//       params.push(new Date(afterTime));
+//       idx++;
+//     }
+
+//     let newsOrderBy = "";
+
+//     if (sort === "default") {
+//       let locationScoreSql = "0";
+//       if (hasLocation) {
+//         locationScoreSql = `
+//           (CASE 
+//             WHEN n.geo_point IS NOT NULL THEN
+//               1 / (1 + (ST_DistanceSphere(
+//                 n.geo_point::geometry,
+//                 ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+//               ) / 8000))
+//             ELSE 0
+//           END * 10)
+//         `;
+//       }
+
+//       if (prefJson) {
+//         params.push(prefJson);
+//         const pIdx = idx;
+//         idx++;
+
+//         newsOrderBy = `
+//           ORDER BY (
+//               ${locationScoreSql}
+//               +
+//               (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'clicked_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.1) 
+//               +
+//               (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'skipped_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.5)
+//               +
+//               (CASE WHEN ($${pIdx}::jsonb->>'preferred_news_type') = n.area_type THEN 2 ELSE 0 END)
+//               +
+//               ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
+//           ) DESC
+//         `;
+//       } else {
+//         if (hasLocation) {
+//           newsOrderBy = `
+//             ORDER BY (
+//               ${locationScoreSql} + 
+//               ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
+//             ) DESC 
+//           `;
+//         } else {
+//           newsOrderBy = ` ORDER BY n.created_at DESC `;
+//         }
+//       }
+//     } else {
+//       newsOrderBy = ` ORDER BY n.created_at DESC `;
+//     }
+
+//     const limitParamIdx = idx;
+//     const offsetParamIdx = idx + 1;
+//     params.push(parsedLimit, newsOffset);
+
+//     const mainQuery = `
+//       WITH news_batch AS (
+//         SELECT 
+//             n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+//             n.is_featured, n.category, n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, n.fullscreen,
+//             COALESCE(v.view_count, 0) AS view_count,
+//             COALESCE(l.like_count, 0) AS like_count,
+//             COALESCE(c.comment_count, 0) AS comment_count,
+//             COALESCE(s.share_count, 0) AS share_count,
+//             CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+//             CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved,
+//             ROW_NUMBER() OVER (${newsOrderBy}) as rn
+//         FROM news n
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+//         LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+//         LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+//         WHERE ${newsWhere}
+//         LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+//       ),
+
+//       ads_batch AS (
+//         SELECT 
+//             ad_id, content_url, redirect_url,
+//             ROW_NUMBER() OVER (
+//                 ORDER BY (
+//                     (view_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
+//                     (click_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.3 + 
+//                     (like_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.2 + 
+//                     (share_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.1
+//                 ) DESC
+//             ) as rn
+//         FROM advertisements
+//         WHERE format_id = 1 
+//           AND is_active = true 
+//           AND end_at > NOW()
+//         LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+//       )
+
+//       SELECT 
+//         nb.news_id as id, 
+//         nb.title, 
+//         nb.short_description as description, 
+//         nb.content_url,
+//         nb.redirect_url,
+//         nb.is_featured,
+//         nb.category,
+//         nb.is_breaking,
+//         nb.is_ad,
+//         nb.tags,
+//         nb.type_id,
+//         nb.updated_at,
+//         nb.fullscreen,
+//         nb.view_count,
+//         nb.like_count,
+//         nb.comment_count,
+//         nb.share_count,
+//         nb.is_liked,
+//         nb.is_saved,
+
+//         ab.ad_id as aston_news_id, 
+//         ab.content_url as bottom_ad_content_url, 
+//         ab.redirect_url as bottom_ad_redirect_url
+
+//       FROM news_batch nb
+//       LEFT JOIN ads_batch ab ON nb.rn = ab.rn
+//       ORDER BY nb.rn ASC
+//     `;
+
+//     const newsRes = await db.query(mainQuery, params);
+
+//     let adQuery = `
+//       SELECT
+//         a.ad_id AS id,
+//         a.title,
+//         a.description,
+//         a.content_url,
+//         a.redirect_url,
+//         a.is_featured,
+//         a.category,
+//         a.is_ad,
+//         a.type_id,
+//         a.target_tags as tags,
+//         a.updated_at,
+//         a.fullscreen,
+//         COALESCE(v.view_count, 0) AS view_count,
+//         COALESCE(l.like_count, 0) AS like_count,
+//         COALESCE(c.comment_count, 0) AS comment_count,
+//         COALESCE(s.share_count, 0) AS share_count,
+//         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+//         CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+//       FROM advertisements a
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+//       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+//       LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $1
+//       LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
+//       WHERE a.is_active = true AND a.format_id = 2
+//     `;
+
+//     if (hasLocation) {
+//       adQuery += `
+//         ORDER BY
+//           (priority_score * 0.6) +
+//           (CASE 
+//             WHEN geo_point IS NOT NULL THEN
+//               1 / (1 + (ST_DistanceSphere(
+//                 geo_point::geometry,
+//                 ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+//               ) / 8000))
+//             ELSE 0
+//           END * 10)
+//         DESC
+//       `;
+//     } else {
+//       adQuery += ` ORDER BY priority_score DESC `;
+//     }
+
+//     adQuery += ` LIMIT ${parsedAds} OFFSET ${adsOffset} `;
+
+//     const adsRes = await db.query(adQuery, [userId]);
+
+//     const finalData = mergeNewsWithAds(newsRes.rows, adsRes.rows);
+
+//     res.status(200).json({
+//       success: true,
+//       page,
+//       limit: parsedLimit,
+//       ads_limit: parsedAds,
+//       news_count: newsRes.rows.length,
+//       ads_count: adsRes.rows.length,
+//       news: newsRes.rows,
+//       ads: adsRes.rows,
+//       data: finalData,
+//     });
+//   } catch (err) {
+//     console.error("Feed API error:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
 
 function mergeNewsWithAds(news, ads) {
   if (ads.length === 0) return news;
