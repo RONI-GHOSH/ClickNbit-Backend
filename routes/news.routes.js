@@ -1082,24 +1082,14 @@ router.get("/feed", async (req, res) => {
     const newsOffset = (page - 1) * parsedLimit;
     const adsOffset = (page - 1) * parsedAds;
 
-    let prefJson = null;
-    const prefRes = await db.query(
-      `SELECT
-        clicked_news_category,
-        skipped_news_category,
-        preferred_news_type,
-        user_locations
-      FROM preferences
-      WHERE user_id = $1 LIMIT 1`,
-      [userId]
-    );
-
-    if (prefRes.rows.length) prefJson = prefRes.rows[0];
-
     const params = [userId];
     let idx = 2;
 
-    let newsWhere = `n.is_active = true`;
+    const prefJson = null;
+
+    let newsWhere = `n.news_id NOT IN (
+      SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false
+    )`;
 
     if (type !== "all") {
       newsWhere += ` AND n.type_id = $${idx} `;
@@ -1164,7 +1154,8 @@ router.get("/feed", async (req, res) => {
           newsOrderBy = `
             ORDER BY (
               ${locationScoreSql} +
-              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
+              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005) +
+              (n.priority_score * 1)
             ) DESC
           `;
         } else {
@@ -1182,8 +1173,8 @@ router.get("/feed", async (req, res) => {
     const mainQuery = `
       WITH news_batch AS (
         SELECT
-            n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
-            n.is_featured, n.category, n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, n.fullscreen,
+            n.news_id, n.title, n.short_description, n.content_url, n.vertical_content_url, n.square_content_url, n.compressed_content_url , 
+            n.redirect_url, n.is_featured, n.category, n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, n.fullscreen,
             COALESCE(v.view_count, 0) AS view_count,
             COALESCE(l.like_count, 0) AS like_count,
             COALESCE(c.comment_count, 0) AS comment_count,
