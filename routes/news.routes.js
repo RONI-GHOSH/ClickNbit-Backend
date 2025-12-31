@@ -1163,10 +1163,10 @@ router.get("/feed", async (req, res) => {
     // Build ads ordering based on location for format_id=1
     let adsOrderClause = `
       ORDER BY (
-        ((a.view_target::float - COALESCE(av.view_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
-        ((a.click_target::float - COALESCE(acs.click_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.3 + 
-        ((a.like_target::float - COALESCE(al.like_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.2 + 
-        ((a.share_target::float - COALESCE(ash.share_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.1 +
+        (a.view_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
+        (a.click_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.3 + 
+        (a.like_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.2 + 
+        (a.share_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.1 +
         (EXTRACT(EPOCH FROM (a.end_at - NOW())) / 86400) * -0.005 +
         (COALESCE(a.priority_score, 0) * 0.1)
     `;
@@ -1217,10 +1217,6 @@ router.get("/feed", async (req, res) => {
             a.ad_id, a.content_url, a.redirect_url,
             ROW_NUMBER() OVER (${adsOrderClause}) as global_rn
         FROM advertisements a
-        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) av ON a.ad_id = av.news_id
-        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) al ON a.ad_id = al.news_id
-        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) ash ON a.ad_id = ash.news_id
-        LEFT JOIN (SELECT news_id, COUNT(*) AS click_count FROM shares WHERE share_type = 'click' GROUP BY news_id) acs ON a.ad_id = acs.news_id
         WHERE a.format_id = 1 
           AND a.is_active = true 
           AND a.end_at > NOW()
@@ -1317,17 +1313,16 @@ router.get("/feed", async (req, res) => {
       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
-      LEFT JOIN (SELECT news_id, COUNT(*) AS click_count FROM shares WHERE share_type = 'click' GROUP BY news_id) cs ON a.ad_id = cs.news_id
       LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $1
       LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
       WHERE a.is_active = true 
         AND a.format_id = 2
         AND a.end_at > NOW()
       ORDER BY (
-        ((a.view_target::float - COALESCE(v.view_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
-        ((a.click_target::float - COALESCE(cs.click_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.3 + 
-        ((a.like_target::float - COALESCE(l.like_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.2 + 
-        ((a.share_target::float - COALESCE(s.share_count, 0)) / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.1 +
+        (a.view_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
+        (a.click_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.3 + 
+        (a.like_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.2 + 
+        (a.share_target::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.1 +
         (EXTRACT(EPOCH FROM (a.end_at - NOW())) / 86400) * -0.005 +
         (COALESCE(a.priority_score, 0) * 0.1)
     `;
