@@ -1155,6 +1155,30 @@ router.get("/feed", async (req, res) => {
     `);
     const totalAdsFormat1 = parseInt(adsCountRes.rows[0]?.total || 0);
 
+    // Build ads ordering based on location
+    let adsOrderClause = `
+      ORDER BY (
+        ((a.view_target - COALESCE(av.view_count, 0))::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
+        ((a.click_target - COALESCE(ac.click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
+        (EXTRACT(EPOCH FROM (a.end_at - NOW())) / 86400) * -0.1 +
+        (COALESCE(a.priority_score, 0) * 0.1)
+    `;
+
+    if (hasLocation) {
+      adsOrderClause += `
+        + (CASE 
+          WHEN a.geo_point IS NOT NULL THEN
+            1 / (1 + (ST_DistanceSphere(
+              a.geo_point::geometry,
+              ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+            ) / 8000))
+          ELSE 0
+        END * 5)
+      `;
+    }
+
+    adsOrderClause += `) DESC`;
+
     const mainQuery = `
       WITH news_batch AS (
         SELECT 
@@ -1180,27 +1204,14 @@ router.get("/feed", async (req, res) => {
 
       ads_all AS (
         SELECT 
-            ad_id, content_url, redirect_url,
-            ROW_NUMBER() OVER (
-                ORDER BY (
-                    ((view_target - COALESCE(view_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
-                    ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
-                    (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
-                    (COALESCE(priority_score, 0) * 0.1)
-                    ${hasLocation ? `+ (CASE 
-                      WHEN geo_point IS NOT NULL THEN
-                        1 / (1 + (ST_DistanceSphere(
-                          geo_point::geometry,
-                          ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
-                        ) / 8000))
-                      ELSE 0
-                    END * 5)` : ''}
-                ) DESC
-            ) as global_rn
-        FROM advertisements
-        WHERE format_id = 1 
-          AND is_active = true 
-          AND end_at > NOW()
+            a.ad_id, a.content_url, a.redirect_url,
+            ROW_NUMBER() OVER (${adsOrderClause}) as global_rn
+        FROM advertisements a
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) av ON a.ad_id = av.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS click_count FROM ad_clicks GROUP BY news_id) ac ON a.ad_id = ac.news_id
+        WHERE a.format_id = 1 
+          AND a.is_active = true 
+          AND a.end_at > NOW()
       ),
       
       ads_batch AS (
@@ -1210,7 +1221,7 @@ router.get("/feed", async (req, res) => {
           redirect_url,
           ROW_NUMBER() OVER (ORDER BY global_rn) as rn
         FROM ads_all
-        WHERE global_rn > ${adsOffset} OR global_rn <= (${adsOffset} % GREATEST((SELECT COUNT(*) FROM ads_all), 1))
+        ${totalAdsFormat1 > 0 ? `WHERE MOD(global_rn - 1 + ${adsOffset}, ${totalAdsFormat1}) < ${parsedLimit}` : 'WHERE 1=1'}
         LIMIT $${limitParamIdx}
       )
 
@@ -1256,6 +1267,7 @@ router.get("/feed", async (req, res) => {
     `);
     const totalAdsFormat2 = parseInt(adsFormat2CountRes.rows[0]?.total || 0);
 
+    // Build query for format_id=2 ads with same ordering
     let adQuery = `
       WITH ads_all AS (
         SELECT
@@ -1271,22 +1283,22 @@ router.get("/feed", async (req, res) => {
           a.target_tags as tags,
           a.updated_at,
           a.fullscreen,
-          COALESCE(v.view_count, 0) AS view_count,
-          COALESCE(l.like_count, 0) AS like_count,
-          COALESCE(c.comment_count, 0) AS comment_count,
-          COALESCE(s.share_count, 0) AS share_count,
+          COALESCE(av.view_count, 0) AS view_count,
+          COALESCE(al.like_count, 0) AS like_count,
+          COALESCE(ac.comment_count, 0) AS comment_count,
+          COALESCE(ash.share_count, 0) AS share_count,
           CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved,
           ROW_NUMBER() OVER (
             ORDER BY (
-              ((view_target - COALESCE(view_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
-              ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
-              (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
-              (COALESCE(priority_score, 0) * 0.1)
+              ((a.view_target - COALESCE(av.view_count, 0))::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
+              ((a.click_target - COALESCE(acc.click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (a.end_at - NOW())), 1)) * 0.4 + 
+              (EXTRACT(EPOCH FROM (a.end_at - NOW())) / 86400) * -0.1 +
+              (COALESCE(a.priority_score, 0) * 0.1)
               ${hasLocation ? `+ (CASE 
-                WHEN geo_point IS NOT NULL THEN
+                WHEN a.geo_point IS NOT NULL THEN
                   1 / (1 + (ST_DistanceSphere(
-                    geo_point::geometry,
+                    a.geo_point::geometry,
                     ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
                   ) / 8000))
                 ELSE 0
@@ -1294,10 +1306,11 @@ router.get("/feed", async (req, res) => {
             ) DESC
           ) as global_rn
         FROM advertisements a
-        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
-        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
-        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
-        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) av ON a.ad_id = av.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) al ON a.ad_id = al.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) ac ON a.ad_id = ac.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) ash ON a.ad_id = ash.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS click_count FROM ad_clicks GROUP BY news_id) acc ON a.ad_id = acc.news_id
         LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $1
         LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $1 AND sv.is_ad = true
         WHERE a.is_active = true 
@@ -1306,7 +1319,8 @@ router.get("/feed", async (req, res) => {
       )
       SELECT *
       FROM ads_all
-      WHERE global_rn > ${adsOffset} OR global_rn <= (${adsOffset} % GREATEST((SELECT COUNT(*) FROM ads_all), 1))
+      ${totalAdsFormat2 > 0 ? `WHERE MOD(global_rn - 1 + ${adsOffset}, ${totalAdsFormat2}) < ${parsedAds}` : 'WHERE 1=1'}
+      ORDER BY global_rn
       LIMIT ${parsedAds}
     `;
 
