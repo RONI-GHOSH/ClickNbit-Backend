@@ -196,7 +196,7 @@ router.post("/", verifyAdmin, async (req, res) => {
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
       ) RETURNING news_id, title, redirect_url, tags, category, area_names, 
         geo_point, radius_km, is_strict_location, is_active, is_featured, 
-        is_breaking, priority_score, relevance_expires_at, expires_at, created_at, fullscreen`,
+        is_breaking, priority_score, relevance_expires_at, expires_at, created_at, fullscreen, vertical_content_url, square_content_url, compressed_content_url`,
       [
         req.admin.id,
         type_id,
