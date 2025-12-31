@@ -6,7 +6,6 @@ const pool = require("../config/db");
 const admin = require("../config/firebaseAdmin");
 const { getCache, setCache } = require("../cache/cache");
 
-
 // Valid metrics for sorting
 const VALID_METRICS = [
   "views",
@@ -170,7 +169,10 @@ router.post("/", verifyAdmin, async (req, res) => {
       priority_score,
       relevance_expires_at,
       expires_at,
-      fullscreen
+      fullscreen,
+      vertical_content_url,
+      square_content_url,
+      compressed_content_url,
     } = req.body;
 
     // Validate required fields
@@ -187,7 +189,8 @@ router.post("/", verifyAdmin, async (req, res) => {
         admin_id, type_id, title, short_description, long_description, 
         content_url, redirect_url, tags, category, area_names, 
         geo_point, radius_km, is_strict_location, is_active, is_featured, 
-        is_breaking, priority_score, relevance_expires_at, expires_at, fullscreen
+        is_breaking, priority_score, relevance_expires_at, expires_at, fullscreen,
+        vertical_content_url, square_content_url, compressed_content_url
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
@@ -214,7 +217,10 @@ router.post("/", verifyAdmin, async (req, res) => {
         priority_score,
         relevance_expires_at,
         expires_at,
-        fullscreen
+        fullscreen,
+        vertical_content_url,
+        square_content_url,
+        compressed_content_url,
       ]
     );
 
@@ -267,7 +273,6 @@ router.delete("/:news_id", verifyAdmin, async (req, res) => {
   }
 });
 
-
 router.get("/details", async (req, res) => {
   try {
     const { news_id } = req.query;
@@ -281,7 +286,9 @@ router.get("/details", async (req, res) => {
     }
 
     // ---- Cache key (user-aware) ----
-    const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"}`;
+    const cacheKey = `news:details:v1:news=${news_id}:user=${
+      userId || "guest"
+    }`;
 
     // ---- Try cache (FAIL-OPEN) ----
     let cached = null;
@@ -319,6 +326,9 @@ router.get("/details", async (req, res) => {
         n.area_type,
         n.priority_score,
         n.fullscreen,
+        n.vertical_content_url,
+        n.square_content_url,
+        n.compressed_content_url,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -384,7 +394,6 @@ router.get("/details", async (req, res) => {
   }
 });
 
-
 // router.get("/details", verifyToken, async (req, res) => {
 //   try {
 //     const { news_id } = req.query;
@@ -398,7 +407,7 @@ router.get("/details", async (req, res) => {
 //     }
 
 //     const query = `
-//       SELECT 
+//       SELECT
 //         n.news_id AS id,
 //         n.title,
 //         n.short_description AS description,
@@ -431,7 +440,7 @@ router.get("/details", async (req, res) => {
 //       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
 //       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $2
 //       LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $2
-      
+
 //       WHERE n.news_id = $1 AND n.is_active = true
 //       LIMIT 1
 //     `;
@@ -446,7 +455,7 @@ router.get("/details", async (req, res) => {
 //     }
 
 //     const astads = await db.query(
-//       `SELECT 
+//       `SELECT
 //         a.ad_id AS id,
 //         a.content_url,
 //         a.redirect_url
@@ -478,31 +487,30 @@ router.get("/top10", async (req, res) => {
     const adLimit = parseInt(ads) || 0;
     const userId = req.user?.id || null;
 
-    let categories = req.query.category ?? req.query['category[]'] ?? 'all';
-    if (typeof categories === 'string') categories = [categories];
-    categories = categories.map(c => c.toLowerCase());
-
-
+    let categories = req.query.category ?? req.query["category[]"] ?? "all";
+    if (typeof categories === "string") categories = [categories];
+    categories = categories.map((c) => c.toLowerCase());
 
     let finalNews = [];
     let lookbackDay = 0;
     const maxLookback = 30;
-    const cacheKey = `top10:v1:cat=${categories.sort().join(",")}:ads=${adLimit}`;
+    const cacheKey = `top10:v1:cat=${categories
+      .sort()
+      .join(",")}:ads=${adLimit}`;
 
     const cached = await getCache(cacheKey);
-  if (cached) {
-    return res.status(200).json({
-    success: true,
-    cached: true,
-    limit: fixedLimit,
-    adsInserted: cached.adsInserted,
-    daysChecked: cached.daysChecked,
-    categories,
-    totalReturned: cached.data.length,
-    data: cached.data,
-    });
-  }
-
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        cached: true,
+        limit: fixedLimit,
+        adsInserted: cached.adsInserted,
+        daysChecked: cached.daysChecked,
+        categories,
+        totalReturned: cached.data.length,
+        data: cached.data,
+      });
+    }
 
     while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
       const needed = fixedLimit - finalNews.length;
@@ -515,15 +523,14 @@ router.get("/top10", async (req, res) => {
       params.push(userId);
       const userIdParam = `$${paramIndex++}`;
 
-
-      if (!categories.includes('all')) {
+      if (!categories.includes("all")) {
         newsWhereClause += `
-                                                                                                                  AND EXISTS (
-                                                                                                                              SELECT 1
-                                                                                                                                          FROM unnest(n.category) c
-                                                                                                                                                      WHERE LOWER(c) = ANY($${paramIndex}::text[])
-                                                                                                                                                                )
-                                                                                                                                                                        `;
+          AND EXISTS (
+                      SELECT 1
+                                  FROM unnest(n.category) c
+                                              WHERE LOWER(c) = ANY($${paramIndex}::text[])
+                                                        )
+                                                                `;
         params.push(categories);
         paramIndex++;
       }
@@ -538,41 +545,44 @@ router.get("/top10", async (req, res) => {
       const pEnd = `$${paramIndex++}`;
 
       newsWhereClause += ` 
-                                                                                                                                                                                                                                                            AND n.created_at <= NOW() - (${pStart} || ' days')::interval
-                                                                                                                                                                                                                                                                    AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
-                                                                                                                                                                                                                                                                          `;
+        AND n.created_at <= NOW() - (${pStart} || ' days')::interval
+                AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
+                      `;
 
       params.push(needed);
       const pLimit = `$${paramIndex++}`;
 
       const query = `
-                                                                                                                                                                                                                                                                                                    SELECT 
-                                                                                                                                                                                                                                                                                                               n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
-                                                                                                                                                                                                                                                                                                                          n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
-                                                                                                                                                                                                                                                                                                                                     n.priority_score, n.fullscreen,
-                                                                                                                                                                                                                                                                                                                                                COALESCE(v.view_count, 0) AS view_count,
-                                                                                                                                                                                                                                                                                                                                                           COALESCE(l.like_count, 0) AS like_count,
-                                                                                                                                                                                                                                                                                                                                                                      COALESCE(c.comment_count, 0) AS comment_count,
-                                                                                                                                                                                                                                                                                                                                                                                 COALESCE(s.share_count, 0) AS share_count,
-                                                                                                                                                                                                                                                                                                                                                                                            CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-                                                                                                                                                                                                                                                                                                                                                                                                       CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-                                                                                                                                                                                                                                                                                                                                                                                                               FROM news n
-                                                                                                                                                                                                                                                                                                                                                                                                                       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                               LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                                       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                                               LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                                                       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                               LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                       WHERE ${newsWhereClause}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ORDER BY (
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          (COALESCE(v.view_count, 0) * 0.4) +
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     (COALESCE(l.like_count, 0) * 0.3) +
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                (COALESCE(c.comment_count, 0) * 0.2) +
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           (COALESCE(s.share_count, 0) * 0.1) +
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      (COALESCE(n.priority_score, 0) * 0.5)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ) DESC
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      LIMIT ${pLimit}
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            `;
+        SELECT 
+                   n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+                              n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
+                                         n.priority_score, n.fullscreen,
+                                         n.vertical_content_url,
+        n.square_content_url,
+        n.compressed_content_url,
+                                                    COALESCE(v.view_count, 0) AS view_count,
+                                                               COALESCE(l.like_count, 0) AS like_count,
+                                                                          COALESCE(c.comment_count, 0) AS comment_count,
+                                                                                     COALESCE(s.share_count, 0) AS share_count,
+                                                                                                CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+                                                                                                           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+                                                                                                                   FROM news n
+                                                                                                                           LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+                                                                                                                                   LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+                                                                                                                                           LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+                                                                                                                                                   LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+                                                                                                                                                           LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
+                                                                                                                                                                   LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
+                                                                                                                                                                           WHERE ${newsWhereClause}
+                                                                                                                                                                                   ORDER BY (
+                                                                                                                                                                                              (COALESCE(v.view_count, 0) * 0.4) +
+                                                                                                                                                                                                         (COALESCE(l.like_count, 0) * 0.3) +
+                                                                                                                                                                                                                    (COALESCE(c.comment_count, 0) * 0.2) +
+                                                                                                                                                                                                                               (COALESCE(s.share_count, 0) * 0.1) +
+                                                                                                                                                                                                                                          (COALESCE(n.priority_score, 0) * 0.5)
+                                                                                                                                                                                                                                                  ) DESC
+                                                                                                                                                                                                                                                          LIMIT ${pLimit}
+                                                                                                                                                                                                                                                                `;
 
       const result = await pool.query(query, params);
 
@@ -587,62 +597,58 @@ router.get("/top10", async (req, res) => {
       ...item,
       id: item.news_id,
       description: item.short_description,
-      rn: index + 1
+      rn: index + 1,
     }));
-
 
     let adsResult = [];
     if (adLimit > 0) {
       const adsQuery = `
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            SELECT 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      a.ad_id AS id,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                a.title,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          a.description,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    a.content_url,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              a.redirect_url,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        a.is_featured,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  a.category,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            a.is_ad,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      a.target_tags as tags,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                a.type_id,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          a.updated_at,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    a.fullscreen,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        /* Ad metrics joins... */
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  COALESCE(v.view_count, 0) AS view_count,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            COALESCE(l.like_count, 0) AS like_count,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      COALESCE(c.comment_count, 0) AS comment_count,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                COALESCE(s.share_count, 0) AS share_count,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            FROM advertisements a
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    WHERE a.is_active = true AND a.format_id = 2
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ORDER BY a.created_at DESC
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    LIMIT $1
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          `;
+        SELECT 
+        a.ad_id AS id,
+        a.title,
+        a.description,
+        a.content_url,
+        a.redirect_url,
+        a.is_featured,
+        a.category,
+        a.is_ad,
+        a.target_tags as tags,
+        a.type_id,
+        a.updated_at,
+        a.fullscreen,
+                                            /* Ad metrics joins... */
+                                                                                        COALESCE(v.view_count, 0) AS view_count,
+                                                                                                  COALESCE(l.like_count, 0) AS like_count,
+                                                                                                            COALESCE(c.comment_count, 0) AS comment_count,
+                                                                                                                      COALESCE(s.share_count, 0) AS share_count,
+                                                                                                                                CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+                                                                                                                                          CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+                                                                                                                                                  FROM advertisements a
+                                                                                                                                                          LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+                                                                                                                                                                  LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+                                                                                                                                                                          LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+                                                                                                                                                                                  LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+                                                                                                                                                                                          LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
+                                                                                                                                                                                                  LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
+                                                                                                                                                                                                          WHERE a.is_active = true AND a.format_id = 2
+                                                                                                                                                                                                                  ORDER BY a.created_at DESC
+                                                                                                                                                                                                                          LIMIT $1
+                                                                                                                                                                                                                                          `;
       adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
     }
 
     const finalData = mergeNewsWithAds(finalNews, adsResult);
     // ---- Top10 TTL ----
-// Trending data changes, but not every second
-  await setCache(
-  cacheKey,
-  {
-    data: finalData,
-    adsInserted: adsResult.length,
-    daysChecked: lookbackDay,
-  },
-  120 // 2 minutes
-  );
-
+    // Trending data changes, but not every second
+    await setCache(
+      cacheKey,
+      {
+        data: finalData,
+        adsInserted: adsResult.length,
+        daysChecked: lookbackDay,
+      },
+      120 // 2 minutes
+    );
 
     res.status(200).json({
       success: true,
@@ -653,7 +659,6 @@ router.get("/top10", async (req, res) => {
       totalReturned: finalData.length,
       data: finalData,
     });
-
   } catch (error) {
     console.error("Top10 fetch error:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -666,17 +671,16 @@ router.get("/public", async (req, res) => {
 
     const parsedLimit = parseInt(limit) || 10;
     const cacheKey = `public:v1:cat=${category}:limit=${parsedLimit}`;
-    
+
     const cached = await getCache(cacheKey);
     if (cached) {
-    return res.status(200).json({
-    success: true,
-    cached: true,
-    count: cached.length,
-    data: cached,
-    });
+      return res.status(200).json({
+        success: true,
+        cached: true,
+        count: cached.length,
+        data: cached,
+      });
     }
-
 
     let query = `
       SELECT 
@@ -734,9 +738,8 @@ router.get("/public", async (req, res) => {
       subtitle: news.subtitle,
     }));
     // ---- Public featured/breaking news TTL ----
-// Changes occasionally, safe to cache slightly longer
+    // Changes occasionally, safe to cache slightly longer
     await setCache(cacheKey, formatted, 300); // 5 minutes
-
 
     res.status(200).json({
       success: true,
@@ -756,7 +759,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
       page = 1,
       limit = 20,
       afterTime,
-      category = null
+      category = null,
     } = req.query;
 
     const userId = req.user?.id || null;
@@ -765,7 +768,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
     const parsedLimit = parseInt(limit) || 20;
     const offset = (parsedPage - 1) * parsedLimit;
 
-    const cleanQuery = q ? q.trim().normalize('NFC') : "";
+    const cleanQuery = q ? q.trim().normalize("NFC") : "";
     const isSearchMode = cleanQuery.length > 0;
 
     const params = [userId];
@@ -773,11 +776,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
 
     let scoreCalculation = "0 as search_score";
 
-    const isCacheable =
-    !isSearchMode &&
-    !afterTime &&
-    parsedPage <= 3; // cache only first 3 pages
-    
+    const isCacheable = !isSearchMode && !afterTime && parsedPage <= 3; // cache only first 3 pages
 
     if (isSearchMode) {
       params.push(`%${cleanQuery}%`);
@@ -792,10 +791,11 @@ router.get("/search-news", verifyToken, async (req, res) => {
     }
     let cacheKey = null;
 
-  if (isCacheable) {
-    cacheKey = `search:browse:v1:cat=${category || "all"}:page=${parsedPage}:limit=${parsedLimit}`;
-  }
-
+    if (isCacheable) {
+      cacheKey = `search:browse:v1:cat=${
+        category || "all"
+      }:page=${parsedPage}:limit=${parsedLimit}`;
+    }
 
     let query = `
       SELECT
@@ -848,7 +848,7 @@ router.get("/search-news", verifyToken, async (req, res) => {
 
     if (category) {
       query += ` AND n.category && $${paramIndex}::text[]`;
-      params.push(category.split(','));
+      params.push(category.split(","));
       paramIndex++;
     }
 
@@ -862,27 +862,25 @@ router.get("/search-news", verifyToken, async (req, res) => {
     params.push(parsedLimit, offset);
 
     if (cacheKey) {
-  const cached = await getCache(cacheKey);
-  if (cached) {
-    return res.json({
-      success: true,
-      cached: true,
-      mode: "browse",
-      page: parsedPage,
-      limit: parsedLimit,
-      count: cached.length,
-      data: cached,
-    });
-  }
-}
-
+      const cached = await getCache(cacheKey);
+      if (cached) {
+        return res.json({
+          success: true,
+          cached: true,
+          mode: "browse",
+          page: parsedPage,
+          limit: parsedLimit,
+          count: cached.length,
+          data: cached,
+        });
+      }
+    }
 
     const result = await pool.query(query, params);
     if (cacheKey) {
       // Browse results change moderately
       await setCache(cacheKey, result.rows, 120); // 2 minutes
     }
-
 
     res.json({
       success: true,
@@ -903,16 +901,13 @@ router.get("/banner", verifyToken, async (req, res) => {
     const { category = "all", count = 5, ads = 2, afterTime } = req.query;
 
     // ---- normalize category ----
-    let categories = req.query.category ?? req.query['category[]'] ?? 'all';
+    let categories = req.query.category ?? req.query["category[]"] ?? "all";
 
-    if (typeof categories === 'string') {
+    if (typeof categories === "string") {
       categories = [categories];
     }
 
-    categories = categories.map(c => c.toLowerCase());
-
-
-
+    categories = categories.map((c) => c.toLowerCase());
 
     const parsedCount = parseInt(count) || 5;
     const parsedAds = parseInt(ads) || 2;
@@ -922,7 +917,11 @@ router.get("/banner", verifyToken, async (req, res) => {
     const newsParams = [userId];
     let paramIndex = 2;
 
-    const cacheKey = `banner:v1:cat=${categories.sort().join(",")}:count=${parsedCount}:ads=${parsedAds}:after=${afterTime || "none"}`;
+    const cacheKey = `banner:v1:cat=${categories
+      .sort()
+      .join(",")}:count=${parsedCount}:ads=${parsedAds}:after=${
+      afterTime || "none"
+    }`;
     const cached = await getCache(cacheKey);
     if (cached) {
       return res.status(200).json({
@@ -935,7 +934,6 @@ router.get("/banner", verifyToken, async (req, res) => {
         data: cached,
       });
     }
-
 
     let newsQuery = `
       SELECT n.news_id as id, 
@@ -950,6 +948,9 @@ router.get("/banner", verifyToken, async (req, res) => {
         n.tags,
         n.type_id,
         n.updated_at,
+        n.vertical_content_url,
+        n.square_content_url,
+        n.compressed_content_url,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -979,7 +980,7 @@ router.get("/banner", verifyToken, async (req, res) => {
     //   newsParams.push(category);
     //   paramIndex++;
     // }
-    if (!categories.includes('all')) {
+    if (!categories.includes("all")) {
       newsWhereClause += `
         AND EXISTS (
           SELECT 1
@@ -1187,14 +1188,18 @@ router.get("/feed", async (req, res) => {
                     ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
                     (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
                     (COALESCE(priority_score, 0) * 0.1)
-                    ${hasLocation ? `+ (CASE 
+                    ${
+                      hasLocation
+                        ? `+ (CASE 
                       WHEN geo_point IS NOT NULL THEN
                         1 / (1 + (ST_DistanceSphere(
                           geo_point::geometry,
                           ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
                         ) / 8000))
                       ELSE 0
-                    END * 5)` : ''}
+                    END * 5)`
+                        : ""
+                    }
                 ) DESC
             ) as global_rn
         FROM advertisements
@@ -1283,14 +1288,18 @@ router.get("/feed", async (req, res) => {
               ((click_target - COALESCE(click_count, 0))::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
               (EXTRACT(EPOCH FROM (end_at - NOW())) / 86400) * -0.1 +
               (COALESCE(priority_score, 0) * 0.1)
-              ${hasLocation ? `+ (CASE 
+              ${
+                hasLocation
+                  ? `+ (CASE 
                 WHEN geo_point IS NOT NULL THEN
                   1 / (1 + (ST_DistanceSphere(
                     geo_point::geometry,
                     ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
                   ) / 8000))
                 ELSE 0
-              END * 5)` : ''}
+              END * 5)`
+                  : ""
+              }
             ) DESC
           ) as global_rn
         FROM advertisements a
@@ -1319,10 +1328,13 @@ router.get("/feed", async (req, res) => {
 
     for (let i = 0; i < newsRes.rows.length; i++) {
       finalData.push(newsRes.rows[i]);
-      
+
       // Insert 2-3 ads at positions 2-3 in every 10 items
       const positionInTen = (i + 1) % 10;
-      if ((positionInTen === 2 || positionInTen === 3) && adsIndex < adsToInsert.length) {
+      if (
+        (positionInTen === 2 || positionInTen === 3) &&
+        adsIndex < adsToInsert.length
+      ) {
         finalData.push(adsToInsert[adsIndex]);
         adsIndex++;
       }
@@ -1373,12 +1385,12 @@ router.get("/feed", async (req, res) => {
 
 //     let prefJson = null;
 //     const prefRes = await db.query(
-//       `SELECT 
+//       `SELECT
 //         clicked_news_category,
 //         skipped_news_category,
 //         preferred_news_type,
 //         user_locations
-//       FROM preferences 
+//       FROM preferences
 //       WHERE user_id = $1 LIMIT 1`,
 //       [userId]
 //     );
@@ -1401,7 +1413,7 @@ router.get("/feed", async (req, res) => {
 //         AND (
 //           SELECT array_agg(LOWER(c))
 //           FROM unnest(n.category) c
-//         ) && $${idx} 
+//         ) && $${idx}
 //       `;
 //       params.push(category);
 //       idx++;
@@ -1419,7 +1431,7 @@ router.get("/feed", async (req, res) => {
 //       let locationScoreSql = "0";
 //       if (hasLocation) {
 //         locationScoreSql = `
-//           (CASE 
+//           (CASE
 //             WHEN n.geo_point IS NOT NULL THEN
 //               1 / (1 + (ST_DistanceSphere(
 //                 n.geo_point::geometry,
@@ -1439,7 +1451,7 @@ router.get("/feed", async (req, res) => {
 //           ORDER BY (
 //               ${locationScoreSql}
 //               +
-//               (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'clicked_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.1) 
+//               (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'clicked_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.1)
 //               +
 //               (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'skipped_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.5)
 //               +
@@ -1452,9 +1464,9 @@ router.get("/feed", async (req, res) => {
 //         if (hasLocation) {
 //           newsOrderBy = `
 //             ORDER BY (
-//               ${locationScoreSql} + 
+//               ${locationScoreSql} +
 //               ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
-//             ) DESC 
+//             ) DESC
 //           `;
 //         } else {
 //           newsOrderBy = ` ORDER BY n.created_at DESC `;
@@ -1470,7 +1482,7 @@ router.get("/feed", async (req, res) => {
 
 //     const mainQuery = `
 //       WITH news_batch AS (
-//         SELECT 
+//         SELECT
 //             n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
 //             n.is_featured, n.category, n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, n.fullscreen,
 //             COALESCE(v.view_count, 0) AS view_count,
@@ -1492,27 +1504,27 @@ router.get("/feed", async (req, res) => {
 //       ),
 
 //       ads_batch AS (
-//         SELECT 
+//         SELECT
 //             ad_id, content_url, redirect_url,
 //             ROW_NUMBER() OVER (
 //                 ORDER BY (
-//                     (view_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 + 
-//                     (click_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.3 + 
-//                     (like_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.2 + 
+//                     (view_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 +
+//                     (click_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.3 +
+//                     (like_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.2 +
 //                     (share_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.1
 //                 ) DESC
 //             ) as rn
 //         FROM advertisements
-//         WHERE format_id = 1 
-//           AND is_active = true 
+//         WHERE format_id = 1
+//           AND is_active = true
 //           AND end_at > NOW()
 //         LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
 //       )
 
-//       SELECT 
-//         nb.news_id as id, 
-//         nb.title, 
-//         nb.short_description as description, 
+//       SELECT
+//         nb.news_id as id,
+//         nb.title,
+//         nb.short_description as description,
 //         nb.content_url,
 //         nb.redirect_url,
 //         nb.is_featured,
@@ -1530,8 +1542,8 @@ router.get("/feed", async (req, res) => {
 //         nb.is_liked,
 //         nb.is_saved,
 
-//         ab.ad_id as aston_news_id, 
-//         ab.content_url as bottom_ad_content_url, 
+//         ab.ad_id as aston_news_id,
+//         ab.content_url as bottom_ad_content_url,
 //         ab.redirect_url as bottom_ad_redirect_url
 
 //       FROM news_batch nb
@@ -1575,7 +1587,7 @@ router.get("/feed", async (req, res) => {
 //       adQuery += `
 //         ORDER BY
 //           (priority_score * 0.6) +
-//           (CASE 
+//           (CASE
 //             WHEN geo_point IS NOT NULL THEN
 //               1 / (1 + (ST_DistanceSphere(
 //                 geo_point::geometry,
@@ -1873,6 +1885,9 @@ router.put("/:id", verifyAdmin, async (req, res) => {
       relevance_expires_at,
       expires_at,
       fullscreen,
+      vertical_content_url,
+      square_content_url,
+      compressed_content_url,
     } = req.body;
 
     // Check if news exists
@@ -1987,6 +2002,21 @@ router.put("/:id", verifyAdmin, async (req, res) => {
       updateFields.push(`fullscreen = $${paramIndex++}`);
       values.push(fullscreen);
     }
+
+    if (vertical_content_url !== undefined) {
+      updateFields.push(`vertical_content_url = $${paramIndex++}`);
+      values.push(vertical_content_url);
+    }
+
+    if (square_content_url !== undefined) {
+      updateFields.push(`square_content_url = $${paramIndex++}`);
+      values.push(square_content_url);
+    }
+
+    if (compressed_content_url !== undefined) {
+      updateFields.push(`compressed_content_url = $${paramIndex++}`);
+      values.push(compressed_content_url);
+    } 
 
     // Always update the updated_at timestamp
     updateFields.push(`updated_at = NOW()`);
