@@ -30,7 +30,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(helmet()); // Security headers
-app.use(cors({origin: ['https://clicknbit.in', 'https://clicknbitadminvercelapp.vercel.app', 'https://admin.clicknbit.in', 'https://editor.clicknbit.in', 'https://clicknbit-backend.vercel.app', 'http://localhost:3000']})); // Enable CORS
+app.use(cors({origin: ['https://clicknbit.in', 'https://www.clicknbit.in', 'https://clicknbitadminvercelapp.vercel.app', 'https://admin.clicknbit.in', 'https://editor.clicknbit.in', 'https://clicknbit-backend.vercel.app', 'http://localhost:3000']})); // Enable CORS
 app.use(morgan('dev')); // Logging
 app.use(express.json({limit: '50mb'})); // Parse JSON bodies
 app.use(express.urlencoded({ limit: '50mb', extended: true })); // Parse URL-encoded bodies
