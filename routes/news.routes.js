@@ -309,7 +309,17 @@ router.get("/details", async (req, res) => {
 
     // ---- DB query ----
     const query = `
-      SELECT 
+      WITH aston_ad AS (
+        SELECT
+          a.ad_id AS id,
+          a.content_url,
+          a.redirect_url
+        FROM advertisements a
+        WHERE a.is_active = true AND a.format_id = 1
+        ORDER BY RANDOM()
+        LIMIT 1
+      )
+      SELECT
         n.news_id AS id,
         n.title,
         n.short_description AS description,
@@ -329,6 +339,9 @@ router.get("/details", async (req, res) => {
         n.vertical_content_url,
         n.square_content_url,
         n.compressed_content_url,
+        aston_ad.id AS aston_ad_id,
+        aston_ad.content_url AS bottom_ad_content_url,
+        aston_ad.redirect_url AS bottom_ad_redirect_url,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -339,6 +352,7 @@ router.get("/details", async (req, res) => {
         CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
 
       FROM news n
+      LEFT JOIN aston_ad ON true
       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
@@ -1056,7 +1070,7 @@ router.get("/banner", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/feed", async (req, res) => {
+router.get("/feed", verifyToken, async (req, res) => {
   try {
     const {
       type = "all",
@@ -1070,7 +1084,7 @@ router.get("/feed", async (req, res) => {
       currentPage = 1,
     } = req.query;
 
-    const userId = 27//req.user.id;
+    const userId = req.user.id;
     const parsedLimit = parseInt(limit) || 10;
     const parsedAds = parseInt(ads) || 1;
     const page = parseInt(currentPage) || 1;
@@ -1079,14 +1093,15 @@ router.get("/feed", async (req, res) => {
     const userLng = parseFloat(lng);
     const hasLocation = !isNaN(userLat) && !isNaN(userLng);
 
+    // Only offset news. We do NOT offset ads anymore.
     const newsOffset = (page - 1) * parsedLimit;
-    const adsOffset = (page - 1) * parsedAds;
 
     const params = [userId];
     let idx = 2;
 
-    const prefJson = null;
+    const prefJson = null; // Replace with actual pref logic if needed
 
+    // --- NEWS FILTERING LOGIC ---
     let newsWhere = `n.news_id NOT IN (
       SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false
     )`;
@@ -1114,6 +1129,7 @@ router.get("/feed", async (req, res) => {
       idx++;
     }
 
+    // --- NEWS SORTING LOGIC ---
     let newsOrderBy = "";
 
     if (sort === "default") {
@@ -1170,6 +1186,7 @@ router.get("/feed", async (req, res) => {
     const offsetParamIdx = idx + 1;
     params.push(parsedLimit, newsOffset);
 
+    // --- MAIN NEWS + ASTON ADS QUERY ---
     const mainQuery = `
       WITH news_batch AS (
         SELECT
@@ -1196,19 +1213,15 @@ router.get("/feed", async (req, res) => {
       ads_batch AS (
         SELECT
             ad_id, content_url, redirect_url,
-            ROW_NUMBER() OVER (
-                ORDER BY (
-                    (view_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.4 +
-                    (click_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.3 +
-                    (like_target::float  / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.2 +
-                    (share_target::float / GREATEST(EXTRACT(DAY FROM (end_at - NOW())), 1)) * 0.1
-                ) DESC
-            ) as rn
+            -- Random order to rotate ads on every page refresh
+            ROW_NUMBER() OVER (ORDER BY RANDOM()) as rn,
+            -- Count total ads found so we can calculate the modulo loop
+            COUNT(*) OVER() as total_ad_count
         FROM advertisements
         WHERE format_id = 1
           AND is_active = true
-          AND end_at > NOW()
-        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+        -- Always fetch up to 'limit' ads, NO OFFSET.
+        LIMIT $${limitParamIdx}
       )
 
       SELECT
@@ -1237,12 +1250,16 @@ router.get("/feed", async (req, res) => {
         ab.redirect_url as bottom_ad_redirect_url
 
       FROM news_batch nb
-      LEFT JOIN ads_batch ab ON nb.rn = ab.rn
+      -- Smart Loop Join:
+      -- Calculates the correct ad index using Modulo (%) based on the actual count of ads found.
+      -- If 7 ads exist, row 8 wraps around to ad 1.
+      LEFT JOIN ads_batch ab ON ab.rn = ((nb.rn - 1) % ab.total_ad_count) + 1
       ORDER BY nb.rn ASC
     `;
 
     const newsRes = await db.query(mainQuery, params);
 
+    // --- NORMAL ADS QUERY (Standard Feed Ads) ---
     let adQuery = `
       SELECT
         a.ad_id AS id,
@@ -1284,14 +1301,16 @@ router.get("/feed", async (req, res) => {
                 ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
               ) / 8000))
             ELSE 0
-          END * 10)
-        DESC
+          END * 10) DESC,
+          RANDOM() -- Add Randomness fallback
       `;
     } else {
-      adQuery += ` ORDER BY priority_score DESC `;
+      // Priority first, then Random to ensure deep scrolling still shows ads
+      adQuery += ` ORDER BY priority_score DESC, RANDOM() `;
     }
 
-    adQuery += ` LIMIT ${parsedAds} OFFSET ${adsOffset} `;
+    // Removed OFFSET to ensure ads never run out on deep pages
+    adQuery += ` LIMIT ${parsedAds} `;
 
     const adsRes = await db.query(adQuery, [userId]);
 
@@ -1304,8 +1323,6 @@ router.get("/feed", async (req, res) => {
       ads_limit: parsedAds,
       news_count: newsRes.rows.length,
       ads_count: adsRes.rows.length,
-      news: newsRes.rows,
-      ads: adsRes.rows,
       data: finalData,
     });
   } catch (err) {
