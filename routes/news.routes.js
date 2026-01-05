@@ -273,7 +273,7 @@ router.delete("/:news_id", verifyAdmin, async (req, res) => {
   }
 });
 
-router.get("/details", async (req, res) => {
+router.get("/details", verifyToken, async (req, res) => {
   try {
     const { news_id } = req.query;
     const userId = req.user?.id || null;
