@@ -339,6 +339,9 @@ router.get("/details", async (req, res) => {
         n.vertical_content_url,
         n.square_content_url,
         n.compressed_content_url,
+        aston_ad.id AS aston_ad_id,
+        aston_ad.content_url AS bottom_ad_content_url,
+        aston_ad.redirect_url AS bottom_ad_redirect_url,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -1099,7 +1102,9 @@ router.get("/feed", verifyToken, async (req, res) => {
     const prefJson = null; // Replace with actual pref logic if needed
 
     // --- NEWS FILTERING LOGIC ---
-    let newsWhere = `n.news_id IS NOT NULL AND n.is_active = true`;
+    let newsWhere = `n.news_id IS NOT NULL AND NOT IN (
+      SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false
+      AND n.is_active = true`;
 
     if (type !== "all") {
       newsWhere += ` AND n.type_id = $${idx} `;
@@ -1253,7 +1258,165 @@ router.get("/feed", verifyToken, async (req, res) => {
     `;
 
     const newsRes = await db.query(mainQuery, params);
+    if (!newsRes.rows.length) {
+      params = null;
+      params = [userId];
+      idx = 2;
 
+      newsWhere = `n.news_id`;
+      if (type !== "all") {
+        newsWhere += ` AND n.type_id = $${idx} `;
+        params.push(type);
+        idx++;
+      }
+
+      if (category) {
+        newsWhere += `
+        AND (
+          SELECT array_agg(LOWER(c))
+          FROM unnest(n.category) c
+        ) && $${idx}
+      `;
+        params.push(category);
+        idx++;
+      }
+
+      if (afterTime) {
+        newsWhere += ` AND n.created_at > $${idx} `;
+        params.push(new Date(afterTime));
+        idx++;
+      }
+
+      // --- NEWS SORTING LOGIC ---
+      newsOrderBy = "";
+
+      if (sort === "default") {
+        locationScoreSql = "0";
+        if (hasLocation) {
+          locationScoreSql = `
+          (CASE
+            WHEN n.geo_point IS NOT NULL THEN
+              1 / (1 + (ST_DistanceSphere(
+                n.geo_point::geometry,
+                ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)
+              ) / 8000))
+            ELSE 0
+          END * 10)
+        `;
+        }
+
+        if (prefJson) {
+          params.push(prefJson);
+          const pIdx = idx;
+          idx++;
+
+          newsOrderBy = `
+          ORDER BY (
+              ${locationScoreSql}
+              +
+              (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'clicked_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.1)
+              +
+              (COALESCE((SELECT SUM(COALESCE(($${pIdx}::jsonb->'skipped_news_category'->>cat)::int, 0)) FROM unnest(n.category) as cat), 0) * 0.5)
+              +
+              (CASE WHEN ($${pIdx}::jsonb->>'preferred_news_type') = n.area_type THEN 2 ELSE 0 END)
+              +
+              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005)
+          ) DESC
+        `;
+        } else {
+          if (hasLocation) {
+            newsOrderBy = `
+            ORDER BY (
+              ${locationScoreSql} +
+              ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005) +
+              (n.priority_score * 1)
+            ) DESC
+          `;
+          } else {
+            newsOrderBy = ` ORDER BY n.created_at DESC `;
+          }
+        }
+      } else {
+        newsOrderBy = ` ORDER BY n.created_at DESC `;
+      }
+
+      limitParamIdx = idx;
+      offsetParamIdx = idx + 1;
+      params.push(parsedLimit, newsOffset);
+
+      // --- MAIN NEWS + ASTON ADS QUERY ---
+      const mainQuery = `
+      WITH news_batch AS (
+        SELECT
+            n.news_id, n.title, n.short_description, n.content_url, n.vertical_content_url, n.square_content_url, n.compressed_content_url , 
+            n.redirect_url, n.is_featured, n.category, n.is_breaking, n.is_ad, n.tags, n.type_id, n.updated_at, n.fullscreen,
+            COALESCE(v.view_count, 0) AS view_count,
+            COALESCE(l.like_count, 0) AS like_count,
+            COALESCE(c.comment_count, 0) AS comment_count,
+            COALESCE(s.share_count, 0) AS share_count,
+            CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+            CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved,
+            ROW_NUMBER() OVER (${newsOrderBy}) as rn
+        FROM news n
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+        LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+        LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+        WHERE ${newsWhere}
+        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
+      ),
+
+      ads_batch AS (
+        SELECT
+            ad_id, content_url, redirect_url,
+            -- Random order to rotate ads on every page refresh
+            ROW_NUMBER() OVER (ORDER BY RANDOM()) as rn,
+            -- Count total ads found so we can calculate the modulo loop
+            COUNT(*) OVER() as total_ad_count
+        FROM advertisements
+        WHERE format_id = 1
+          AND is_active = true
+        -- Always fetch up to 'limit' ads, NO OFFSET.
+        LIMIT $${limitParamIdx}
+      )
+
+      SELECT
+        nb.news_id as id,
+        nb.title,
+        nb.short_description as description,
+        nb.content_url,
+        nb.redirect_url,
+        nb.is_featured,
+        nb.category,
+        nb.is_breaking,
+        nb.is_ad,
+        nb.tags,
+        nb.type_id,
+        nb.updated_at,
+        nb.fullscreen,
+        nb.view_count,
+        nb.like_count,
+        nb.comment_count,
+        nb.share_count,
+        nb.is_liked,
+        nb.is_saved,
+
+        ab.ad_id as aston_news_id,
+        ab.content_url as bottom_ad_content_url,
+        ab.redirect_url as bottom_ad_redirect_url
+
+      FROM news_batch nb
+      -- Smart Loop Join:
+      -- Calculates the correct ad index using Modulo (%) based on the actual count of ads found.
+      -- If 7 ads exist, row 8 wraps around to ad 1.
+      LEFT JOIN ads_batch ab ON ab.rn = ((nb.rn - 1) % ab.total_ad_count) + 1
+      ORDER BY nb.rn ASC
+    `;
+
+      newsRes = await db.query(mainQuery, params);
+    }
     // --- NORMAL ADS QUERY (Standard Feed Ads) ---
     let adQuery = `
       SELECT
@@ -1718,7 +1881,7 @@ router.put("/:id", verifyAdmin, async (req, res) => {
     if (compressed_content_url !== undefined) {
       updateFields.push(`compressed_content_url = $${paramIndex++}`);
       values.push(compressed_content_url);
-    } 
+    }
 
     // Always update the updated_at timestamp
     updateFields.push(`updated_at = NOW()`);
