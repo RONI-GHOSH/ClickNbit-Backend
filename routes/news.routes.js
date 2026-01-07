@@ -339,9 +339,6 @@ router.get("/details", async (req, res) => {
         n.vertical_content_url,
         n.square_content_url,
         n.compressed_content_url,
-        aston_ad.id AS aston_ad_id,
-        aston_ad.content_url AS bottom_ad_content_url,
-        aston_ad.redirect_url AS bottom_ad_redirect_url,
 
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
