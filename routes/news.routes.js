@@ -1102,9 +1102,7 @@ router.get("/feed", verifyToken, async (req, res) => {
     const prefJson = null; // Replace with actual pref logic if needed
 
     // --- NEWS FILTERING LOGIC ---
-    let newsWhere = `n.news_id NOT IN (
-      SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false
-    )`;
+    let newsWhere = `n.news_id IS NOT NULL AND n.is_active = true`;
 
     if (type !== "all") {
       newsWhere += ` AND n.type_id = $${idx} `;
