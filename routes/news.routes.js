@@ -1270,12 +1270,12 @@ function mergeNewsWithAds(news, ads) {
 
   let newsIndex = 0;
   let adsIndex = 0;
-  let nextAdPos = adInterval-1;
+  let nextAdPos = adInterval;
 
   for (let i = 0; i < totalSlots; i++) {
     if (adsIndex < ads.length && i >= Math.round(nextAdPos)) {
       result.push(ads[adsIndex++]);
-      nextAdPos += adInterval;
+      nextAdPos += adInterval+1;
     } else if (newsIndex < news.length) {
       result.push(news[newsIndex++]);
     }
