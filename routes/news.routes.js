@@ -1075,7 +1075,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       type = "all",
       sort = "default",
       limit = 10,
-      ads = 2,
+      ads = 3,
       lat,
       lng,
       category,
@@ -1270,7 +1270,7 @@ function mergeNewsWithAds(news, ads) {
 
   let newsIndex = 0;
   let adsIndex = 0;
-  let nextAdPos = adInterval;
+  let nextAdPos = adInterval-1;
 
   for (let i = 0; i < totalSlots; i++) {
     if (adsIndex < ads.length && i >= Math.round(nextAdPos)) {
