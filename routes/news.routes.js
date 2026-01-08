@@ -1075,7 +1075,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       type = "all",
       sort = "default",
       limit = 10,
-      ads = 1,
+      ads = 2,
       lat,
       lng,
       category,
