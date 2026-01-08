@@ -275,8 +275,7 @@ router.delete("/:news_id", verifyAdmin, async (req, res) => {
 
 router.get("/details", async (req, res) => {
   try {
-    const { news_id } = req.query;
-    const userId = req.user?.id || null;
+    const { news_id, userId=null } = req.query;
 
     if (!news_id) {
       return res.status(400).json({
