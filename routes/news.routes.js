@@ -1101,7 +1101,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       let whereClause = `n.news_id IS NOT NULL`;
 
       if (!isFallback) {
-        whereClause += ` AND NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
+        whereClause += ` AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
       }
 
       whereClause += ` AND n.is_active = true`;
