@@ -1193,7 +1193,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       return { sql, params };
     };
 
-    let queryData = buildNewsQuery(false);
+    let queryData = buildNewsQuery(true);
     let newsRes = await db.query(queryData.sql, queryData.params);
 
     if (!newsRes.rows.length) {
