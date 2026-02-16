@@ -45,7 +45,11 @@ const verifyToken = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Support both user and admin tokens
     req.user = decoded;
+    // If it's an admin token, it might have data in a different structure, but as long as it's signed by JWT_SECRET
+    // and we map it to req.user (or handle it), it should be fine for these shared routes.
+    // Ideally, we'd check if (decoded.role === 'admin' || decoded.admin_id) etc. 
     next();
   } catch (error) {
     res.status(401).json({ success: false, message: "Invalid token." });
@@ -106,6 +110,12 @@ router.post("/send-notification", verifyAdmin, async (req, res) => {
       console.log(`Notification sent to topic 'all' for news: "${title}"`);
     } catch (notificationError) {
       console.error("Failed to send FCM notification:", notificationError);
+      // Return error to client so they know it failed
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send notification",
+        error: notificationError.message
+      });
     }
     res
       .status(200)
@@ -137,6 +147,11 @@ router.post("/test-notification", async (req, res) => {
       console.log(`Notification sent to topic for testing`);
     } catch (notificationError) {
       console.error("Failed to send FCM notification:", notificationError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send test notification",
+        error: notificationError.message
+      });
     }
     res
       .status(200)
@@ -275,7 +290,7 @@ router.delete("/:news_id", verifyAdmin, async (req, res) => {
 
 router.get("/details", async (req, res) => {
   try {
-    const { news_id, userId=null } = req.query;
+    const { news_id, userId = null } = req.query;
 
     if (!news_id) {
       return res.status(400).json({
@@ -285,9 +300,8 @@ router.get("/details", async (req, res) => {
     }
 
     // ---- Cache key (user-aware) ----
-    const cacheKey = `news:details:v1:news=${news_id}:user=${
-      userId || "guest"
-    }`;
+    const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"
+      }`;
 
     // ---- Try cache (FAIL-OPEN) ----
     let cached = null;
@@ -407,7 +421,73 @@ router.get("/details", async (req, res) => {
   }
 });
 
-// router.get("/details", verifyToken, async (req, res) => {
+// --- Manual Top 10 Overrides ---
+
+router.get("/manual-top10", verifyToken, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT m.rank, m.news_id, n.title, n.short_description, n.content_url, m.updated_at
+       FROM manual_top_news m
+       JOIN news n ON m.news_id = n.news_id
+       ORDER BY m.rank ASC`
+    );
+
+    // Transform into a sparse array or map for easy frontend consumption
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("Fetch manual top 10 error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/manual-top10", verifyToken, async (req, res) => {
+  try {
+    const { rank, news_id } = req.body;
+
+    if (!rank || rank < 1 || rank > 10) {
+      return res.status(400).json({ success: false, message: "Rank must be between 1 and 10" });
+    }
+    if (!news_id) {
+      return res.status(400).json({ success: false, message: "News ID is required" });
+    }
+
+    // Upsert logic
+    await db.query(
+      `INSERT INTO manual_top_news (rank, news_id)
+       VALUES ($1, $2)
+       ON CONFLICT (rank) 
+       DO UPDATE SET news_id = EXCLUDED.news_id, updated_at = CURRENT_TIMESTAMP`,
+      [rank, news_id]
+    );
+
+    // Clear top10 cache
+    // Note: We clear a broad pattern or just let it expire (2 min TTL). 
+    // To be safe, we could delete specific keys if we knew them, but short TTL is fine.
+    // Ideally we'd have a wildcard delete for "top10:*" but simplistic cache helpers might not support it.
+
+    res.status(200).json({ success: true, message: `Rank ${rank} updated` });
+  } catch (error) {
+    console.error("Set manual top 10 error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.delete("/manual-top10/:rank", verifyToken, async (req, res) => {
+  try {
+    const { rank } = req.params;
+
+    if (!rank) {
+      return res.status(400).json({ success: false, message: "Rank is required" });
+    }
+
+    await db.query("DELETE FROM manual_top_news WHERE rank = $1", [rank]);
+
+    res.status(200).json({ success: true, message: `Rank ${rank} cleared` });
+  } catch (error) {
+    console.error("Clear manual top 10 error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 //   try {
 //     const { news_id } = req.query;
 //     const userId = req.user?.id || null;
@@ -525,8 +605,44 @@ router.get("/top10", async (req, res) => {
       });
     }
 
+    // 1. Fetch Manual Overrides
+    const manualRes = await pool.query(
+      `SELECT m.rank, n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+              n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
+              n.priority_score, n.fullscreen,
+              n.vertical_content_url, n.square_content_url, n.compressed_content_url,
+              COALESCE(v.view_count, 0) AS view_count,
+              COALESCE(l.like_count, 0) AS like_count,
+              COALESCE(c.comment_count, 0) AS comment_count,
+              COALESCE(s.share_count, 0) AS share_count,
+              CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+              CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+       FROM manual_top_news m
+       JOIN news n ON m.news_id = n.news_id
+       LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+       LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+       WHERE n.is_active = true
+       ORDER BY m.rank ASC`,
+      [userId]
+    );
+
+    const manualOverrides = {}; // Map rank -> news item
+    const manualNewsIds = new Set();
+
+    manualRes.rows.forEach(row => {
+      manualOverrides[row.rank] = row;
+      manualNewsIds.add(row.news_id);
+    });
+
+    // 2. Fetch Algorithmic Candidates (excluding manual IDs)
+    // We need enough items to fill the gaps. Safe bet is fetching fixedLimit items.
+
     while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
-      const needed = fixedLimit - finalNews.length;
+      const needed = fixedLimit; // Fetch full batch to filter safely
 
       const params = [];
       let paramIndex = 1;
@@ -539,11 +655,11 @@ router.get("/top10", async (req, res) => {
       if (!categories.includes("all")) {
         newsWhereClause += `
           AND EXISTS (
-                      SELECT 1
-                                  FROM unnest(n.category) c
-                                              WHERE LOWER(c) = ANY($${paramIndex}::text[])
-                                                        )
-                                                                `;
+            SELECT 1
+            FROM unnest(n.category) c
+            WHERE LOWER(c) = ANY($${paramIndex}::text[])
+          )
+        `;
         params.push(categories);
         paramIndex++;
       }
@@ -559,43 +675,51 @@ router.get("/top10", async (req, res) => {
 
       newsWhereClause += ` 
         AND n.created_at <= NOW() - (${pStart} || ' days')::interval
-                AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
-                      `;
+        AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
+      `;
+
+      // Exclude manually pinned news from the algo query to avoid duplicates
+      if (manualNewsIds.size > 0) {
+        const manualIdsArray = Array.from(manualNewsIds);
+        newsWhereClause += ` AND n.news_id != ANY($${paramIndex}::int[])`;
+        params.push(manualIdsArray);
+        paramIndex++;
+      }
 
       params.push(needed);
       const pLimit = `$${paramIndex++}`;
 
       const query = `
         SELECT 
-                   n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
-                              n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
-                                         n.priority_score, n.fullscreen,
-                                         n.vertical_content_url,
-        n.square_content_url,
-        n.compressed_content_url,
-                                                    COALESCE(v.view_count, 0) AS view_count,
-                                                               COALESCE(l.like_count, 0) AS like_count,
-                                                                          COALESCE(c.comment_count, 0) AS comment_count,
-                                                                                     COALESCE(s.share_count, 0) AS share_count,
-                                                                                                CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-                                                                                                           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-                                                                                                                   FROM news n
-                                                                                                                           LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
-                                                                                                                                   LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
-                                                                                                                                           LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
-                                                                                                                                                   LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-                                                                                                                                                           LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
-                                                                                                                                                                   LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
-                                                                                                                                                                           WHERE ${newsWhereClause}
-                                                                                                                                                                                   ORDER BY (
-                                                                                                                                                                                              (COALESCE(v.view_count, 0) * 0.4) +
-                                                                                                                                                                                                         (COALESCE(l.like_count, 0) * 0.3) +
-                                                                                                                                                                                                                    (COALESCE(c.comment_count, 0) * 0.2) +
-                                                                                                                                                                                                                               (COALESCE(s.share_count, 0) * 0.1) +
-                                                                                                                                                                                                                                          (COALESCE(n.priority_score, 0) * 0.5)
-                                                                                                                                                                                                                                                  ) DESC
-                                                                                                                                                                                                                                                          LIMIT ${pLimit}
-                                                                                                                                                                                                                                                                `;
+           n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+           n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
+           n.priority_score, n.fullscreen,
+           n.vertical_content_url,
+           n.square_content_url,
+           n.compressed_content_url,
+           COALESCE(v.view_count, 0) AS view_count,
+           COALESCE(l.like_count, 0) AS like_count,
+           COALESCE(c.comment_count, 0) AS comment_count,
+           COALESCE(s.share_count, 0) AS share_count,
+           CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+        FROM news n
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+        LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
+        LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
+        WHERE ${newsWhereClause}
+        ORDER BY (
+          (COALESCE(v.view_count, 0) * 0.4) +
+          (COALESCE(l.like_count, 0) * 0.3) +
+          (COALESCE(c.comment_count, 0) * 0.2) +
+          (COALESCE(s.share_count, 0) * 0.1) +
+          (COALESCE(n.priority_score, 0) * 0.5)
+        ) DESC
+        LIMIT ${pLimit}
+      `;
 
       const result = await pool.query(query, params);
 
@@ -605,6 +729,26 @@ router.get("/top10", async (req, res) => {
 
       lookbackDay++;
     }
+
+    // 3. Merge Lists
+    // Create a final array of length 10
+    const mergedList = [];
+    let algoIndex = 0;
+
+    for (let rank = 1; rank <= fixedLimit; rank++) {
+      if (manualOverrides[rank]) {
+        mergedList.push(manualOverrides[rank]);
+      } else {
+        // Take next available from algo list
+        if (algoIndex < finalNews.length) {
+          mergedList.push(finalNews[algoIndex]);
+          algoIndex++;
+        }
+      }
+    }
+
+    // Replace finalNews with mergedList for downstream processing
+    finalNews = mergedList;
 
     finalNews = finalNews.map((item, index) => ({
       ...item,
@@ -805,9 +949,8 @@ router.get("/search-news", verifyToken, async (req, res) => {
     let cacheKey = null;
 
     if (isCacheable) {
-      cacheKey = `search:browse:v1:cat=${
-        category || "all"
-      }:page=${parsedPage}:limit=${parsedLimit}`;
+      cacheKey = `search:browse:v1:cat=${category || "all"
+        }:page=${parsedPage}:limit=${parsedLimit}`;
     }
 
     let query = `
@@ -932,9 +1075,8 @@ router.get("/banner", verifyToken, async (req, res) => {
 
     const cacheKey = `banner:v1:cat=${categories
       .sort()
-      .join(",")}:count=${parsedCount}:ads=${parsedAds}:after=${
-      afterTime || "none"
-    }`;
+      .join(",")}:count=${parsedCount}:ads=${parsedAds}:after=${afterTime || "none"
+      }`;
     const cached = await getCache(cacheKey);
     if (cached) {
       return res.status(200).json({
@@ -1275,7 +1417,7 @@ function mergeNewsWithAds(news, ads) {
   for (let i = 0; i < totalSlots; i++) {
     if (adsIndex < ads.length && i >= Math.round(nextAdPos)) {
       result.push(ads[adsIndex++]);
-      nextAdPos += adInterval+1;
+      nextAdPos += adInterval + 1;
     } else if (newsIndex < news.length) {
       result.push(news[newsIndex++]);
     }

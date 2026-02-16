@@ -29,10 +29,26 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
+// Define allowed origins
+const allowedOrigins = [
+  'https://clicknbit.in',
+  'https://www.clicknbit.in',
+  'https://s3.clicknbit.in',
+  'https://clicknbitadminvercelapp.vercel.app',
+  'https://admin.clicknbit.in',
+  'https://editor.clicknbit.in',
+  'https://clicknbit-backend.vercel.app'
+];
+
+// Add localhost for development
+if (process.env.NODE_ENV !== 'production') {
+  allowedOrigins.push('http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002');
+}
+
 app.use(helmet()); // Security headers
-app.use(cors({origin: ['https://clicknbit.in', 'https://www.clicknbit.in', 'https://s3.clicknbit.in', 'https://clicknbitadminvercelapp.vercel.app', 'https://admin.clicknbit.in', 'https://editor.clicknbit.in', 'https://clicknbit-backend.vercel.app', 'http://localhost:3000']})); // Enable CORS
+app.use(cors({ origin: allowedOrigins })); // Enable CORS
 app.use(morgan('dev')); // Logging
-app.use(express.json({limit: '50mb'})); // Parse JSON bodies
+app.use(express.json({ limit: '50mb' })); // Parse JSON bodies
 app.use(express.urlencoded({ limit: '50mb', extended: true })); // Parse URL-encoded bodies
 
 // Routes
