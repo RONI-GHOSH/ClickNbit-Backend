@@ -593,6 +593,32 @@ router.get("/top10", async (req, res) => {
 
     const cached = await getCache(cacheKey);
     if (cached) {
+      // PERMANENT FIX: Even on cache hit, we MUST fetch live user data (is_liked, is_saved)
+      // because the cache only stores global public data.
+      let enrichedData = cached.data;
+
+      if (userId && cached.data.length > 0) {
+        const newsIds = cached.data.map(n => n.news_id);
+        const interactionsRes = await pool.query(`
+          SELECT news_id, 'like' as type FROM news_likes WHERE user_id = $1 AND news_id = ANY($2::int[])
+          UNION ALL
+          SELECT id as news_id, 'save' as type FROM saves WHERE user_id = $1 AND id = ANY($2::int[]) AND is_ad = false
+        `, [userId, newsIds]);
+
+        const userLikedIds = new Set();
+        const userSavedIds = new Set();
+        interactionsRes.rows.forEach(row => {
+          if (row.type === 'like') userLikedIds.add(row.news_id);
+          if (row.type === 'save') userSavedIds.add(row.news_id);
+        });
+
+        enrichedData = cached.data.map(item => ({
+          ...item,
+          is_liked: userLikedIds.has(item.news_id),
+          is_saved: userSavedIds.has(item.news_id)
+        }));
+      }
+
       return res.status(200).json({
         success: true,
         cached: true,
@@ -600,12 +626,12 @@ router.get("/top10", async (req, res) => {
         adsInserted: cached.adsInserted,
         daysChecked: cached.daysChecked,
         categories,
-        totalReturned: cached.data.length,
-        data: cached.data,
+        totalReturned: enrichedData.length,
+        data: enrichedData,
       });
     }
 
-    // 1. Fetch Manual Overrides
+    // 1. Fetch Manual Overrides (Global - No User Context)
     const manualRes = await pool.query(
       `SELECT m.rank, n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
               n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
@@ -615,19 +641,17 @@ router.get("/top10", async (req, res) => {
               COALESCE(l.like_count, 0) AS like_count,
               COALESCE(c.comment_count, 0) AS comment_count,
               COALESCE(s.share_count, 0) AS share_count,
-              CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-              CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+              false AS is_liked,
+              false AS is_saved
        FROM manual_top_news m
        JOIN news n ON m.news_id = n.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
-       LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
        WHERE n.is_active = true
        ORDER BY m.rank ASC`,
-      [userId]
+      []
     );
 
     const manualOverrides = {}; // Map rank -> news item
@@ -649,8 +673,7 @@ router.get("/top10", async (req, res) => {
 
       let newsWhereClause = `n.is_active = true`;
 
-      params.push(userId);
-      const userIdParam = `$${paramIndex++}`;
+      // REMOVED: userId from params
 
       if (!categories.includes("all")) {
         newsWhereClause += `
@@ -701,15 +724,13 @@ router.get("/top10", async (req, res) => {
            COALESCE(l.like_count, 0) AS like_count,
            COALESCE(c.comment_count, 0) AS comment_count,
            COALESCE(s.share_count, 0) AS share_count,
-           CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+           false AS is_liked,
+           false AS is_saved
         FROM news n
         LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-        LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
-        LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
         WHERE ${newsWhereClause}
         ORDER BY (
           (COALESCE(v.view_count, 0) * 0.4) +
@@ -730,8 +751,7 @@ router.get("/top10", async (req, res) => {
       lookbackDay++;
     }
 
-    // 3. Merge Lists
-    // Create a final array of length 10
+    // 3. Merge Lists and Cache Global Result
     const mergedList = [];
     let algoIndex = 0;
 
@@ -739,7 +759,6 @@ router.get("/top10", async (req, res) => {
       if (manualOverrides[rank]) {
         mergedList.push(manualOverrides[rank]);
       } else {
-        // Take next available from algo list
         if (algoIndex < finalNews.length) {
           mergedList.push(finalNews[algoIndex]);
           algoIndex++;
@@ -747,8 +766,48 @@ router.get("/top10", async (req, res) => {
       }
     }
 
-    // Replace finalNews with mergedList for downstream processing
-    finalNews = mergedList;
+    // Cache the GLOBAL list (no user specific data yet)
+    // We already checked cache at the start. If we are here, we missed cache.
+    // So we cache strictly the `mergedList` which only contains public data now.
+
+    // Ensure data cached matches structure
+    const globalDataToCache = {
+      adsInserted: 0, // Placeholder
+      daysChecked: lookbackDay,
+      data: mergedList
+    };
+
+    // Cache for 5 minutes (300 sec)
+    await setCache(cacheKey, globalDataToCache, 300);
+
+    // 4. Enrich with User Data (Live)
+    let userLikedIds = new Set();
+    let userSavedIds = new Set();
+
+    if (userId && mergedList.length > 0) {
+      const newsIds = mergedList.map(n => n.news_id);
+
+      const interactionsRes = await pool.query(`
+        SELECT news_id, 'like' as type FROM news_likes WHERE user_id = $1 AND news_id = ANY($2::int[])
+        UNION ALL
+        SELECT id as news_id, 'save' as type FROM saves WHERE user_id = $1 AND id = ANY($2::int[]) AND is_ad = false
+      `, [userId, newsIds]);
+
+      interactionsRes.rows.forEach(row => {
+        if (row.type === 'like') userLikedIds.add(row.news_id);
+        if (row.type === 'save') userSavedIds.add(row.news_id);
+      });
+    }
+
+    // 5. Final Response Construction
+    const dataWithUserStatus = mergedList.map(item => ({
+      ...item,
+      is_liked: userLikedIds.has(item.news_id),
+      is_saved: userSavedIds.has(item.news_id)
+    }));
+
+    // Proceed with downstream processing (Ads, formatting) using the enriched list
+    finalNews = dataWithUserStatus;
 
     finalNews = finalNews.map((item, index) => ({
       ...item,
@@ -773,39 +832,32 @@ router.get("/top10", async (req, res) => {
         a.type_id,
         a.updated_at,
         a.fullscreen,
-                                            /* Ad metrics joins... */
-                                                                                        COALESCE(v.view_count, 0) AS view_count,
-                                                                                                  COALESCE(l.like_count, 0) AS like_count,
-                                                                                                            COALESCE(c.comment_count, 0) AS comment_count,
-                                                                                                                      COALESCE(s.share_count, 0) AS share_count,
-                                                                                                                                CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-                                                                                                                                          CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-                                                                                                                                                  FROM advertisements a
-                                                                                                                                                          LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
-                                                                                                                                                                  LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
-                                                                                                                                                                          LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
-                                                                                                                                                                                  LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
-                                                                                                                                                                                          LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
-                                                                                                                                                                                                  LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
-                                                                                                                                                                                                          WHERE a.is_active = true AND a.format_id = 2
-                                                                                                                                                                                                                  ORDER BY a.created_at DESC
-                                                                                                                                                                                                                          LIMIT $1
-                                                                                                                                                                                                                                          `;
+        /* Ad metrics joins... */
+        COALESCE(v.view_count, 0) AS view_count,
+        COALESCE(l.like_count, 0) AS like_count,
+        COALESCE(c.comment_count, 0) AS comment_count,
+        COALESCE(s.share_count, 0) AS share_count,
+        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+        FROM advertisements a
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+        LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
+        LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
+        WHERE a.is_active = true AND a.format_id = 2
+        ORDER BY -LOG(RANDOM()) / (CASE WHEN a.priority_score <= 0 THEN 0.1 ELSE a.priority_score END) DESC
+        LIMIT $1
+      `;
       adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
     }
 
-    const finalData = mergeNewsWithAds(finalNews, adsResult);
-    // ---- Top10 TTL ----
-    // Trending data changes, but not every second
-    await setCache(
-      cacheKey,
-      {
-        data: finalData,
-        adsInserted: adsResult.length,
-        daysChecked: lookbackDay,
-      },
-      120 // 2 minutes
-    );
+    const finalData = await mergeNewsWithAds(finalNews, adsResult);
+
+    // REMOVED: Second setCache here. 
+    // We do NOT want to cache the final result because it contains User-Specific data (is_liked/is_saved).
+    // The Global List is already cached above. Ads are fetched live.
 
     res.status(200).json({
       success: true,
@@ -1235,62 +1287,47 @@ router.get("/feed", verifyToken, async (req, res) => {
     const userLng = parseFloat(lng);
     const hasLocation = !isNaN(userLat) && !isNaN(userLng);
 
-    const buildNewsQuery = (isFallback = false) => {
-      let params = [userId];
-      let idx = 2;
 
-      let whereClause = `n.news_id IS NOT NULL`;
+    // Helper to get aston ad frequency
+    const getAstonAdFrequency = async () => {
+      try {
+        const cacheKey = 'system_settings:aston_ad_frequency';
+        const cached = await getCache(cacheKey);
+        if (cached) return parseInt(cached);
 
-      if (!isFallback) {
-        whereClause += ` AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
-      }
+        const result = await db.query("SELECT setting_value FROM system_settings WHERE setting_key = 'aston_ad_frequency'");
 
-      whereClause += ` AND n.is_active = true`;
-
-      if (type !== "all") {
-        whereClause += ` AND n.type_id = $${idx} `;
-        params.push(type);
-        idx++;
-      }
-
-      if (category) {
-        whereClause += ` AND (SELECT array_agg(LOWER(c)) FROM unnest(n.category) c) && $${idx} `;
-        params.push(category);
-        idx++;
-      }
-
-      if (afterTime) {
-        whereClause += ` AND n.created_at > $${idx} `;
-        params.push(new Date(afterTime));
-        idx++;
-      }
-
-      let orderByClause = "";
-      const locationScoreSql = hasLocation
-        ? `(CASE WHEN n.geo_point IS NOT NULL THEN 
-              1 / (1 + (ST_DistanceSphere(n.geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
-           ELSE 0 END * 10)`
-        : "0";
-
-      if (sort === "default") {
-        if (hasLocation) {
-          orderByClause = `ORDER BY (
-                ${locationScoreSql} + 
-                ((EXTRACT(EPOCH FROM (NOW() - n.created_at)) / 3600) * -0.005) + 
-                (n.priority_score * 1)
-             ) DESC`;
-        } else {
-          orderByClause = `ORDER BY n.created_at DESC`;
+        let freq = 3; // Default
+        if (result.rows.length > 0) {
+          freq = parseInt(result.rows[0].setting_value);
         }
-      } else {
-        orderByClause = `ORDER BY n.created_at DESC`;
+
+        await setCache(cacheKey, freq, 300); // Cache for 5 mins
+        return freq;
+      } catch (error) {
+        console.error("Error fetching aston ad frequency:", error);
+        return 3; // Fallback
       }
+    };
 
-      const limitIdx = idx;
-      const offsetIdx = idx + 1;
-      params.push(parsedLimit, newsOffset);
+    const buildNewsQuery = async (isFiltered = false) => {
+      let whereClause = isFiltered ? conditions.join(" AND ") : "is_active = true";
+      let orderByClause = hasLocation && !isFiltered
+        ? `(
+            (n.priority_score * 0.6) + 
+            (CASE WHEN n.geo_point IS NOT NULL THEN 
+              1 / (1 + (ST_DistanceSphere(n.geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
+            ELSE 0 END * 10)
+           ) DESC, n.created_at DESC`
+        : `n.created_at DESC`;
 
-      const sql = `
+      let limitIdx = params.length + 1;
+      let offsetIdx = params.length + 2;
+
+      const queryParams = [...params, parsedLimit, newsOffset];
+      const astonFreq = await getAstonAdFrequency();
+
+      let sql = `
         WITH news_batch AS (
           SELECT 
             n.news_id, n.title, n.short_description, n.content_url, n.vertical_content_url, n.square_content_url, 
@@ -1328,25 +1365,28 @@ router.get("/feed", verifyToken, async (req, res) => {
           nb.view_count, nb.like_count, nb.comment_count, nb.share_count, nb.is_liked, nb.is_saved,
           ab.ad_id as aston_news_id, ab.content_url as bottom_ad_content_url, ab.redirect_url as bottom_ad_redirect_url
         FROM news_batch nb
-        LEFT JOIN ads_batch ab ON ab.rn = ((nb.rn - 1) % ab.total_ad_count) + 1
+        LEFT JOIN ads_batch ab ON 
+            (nb.rn % ${astonFreq} = 0) AND 
+            ab.rn = (((nb.rn / ${astonFreq})::int - 1) % ab.total_ad_count) + 1
         ORDER BY nb.rn ASC
       `;
 
-      return { sql, params };
+      return { sql, params: queryParams };
     };
 
-    let queryData = buildNewsQuery(true);
+    let queryData = await buildNewsQuery(true);
     let newsRes = await db.query(queryData.sql, queryData.params);
 
     if (!newsRes.rows.length) {
       console.log("No filtered news found, fetching fallback news...");
-      queryData = buildNewsQuery(true);
+      queryData = await buildNewsQuery(false);
       newsRes = await db.query(queryData.sql, queryData.params);
     }
 
+    // Main Ads (Format ID 2) Logic
     let adQuery = `
       SELECT 
-        a.ad_id AS id, a.title, a.description, a.content_url, a.redirect_url, a.is_featured, 
+        a.ad_id as id, a.title, a.description, a.content_url, a.redirect_url, a.is_featured, 
         a.category, a.is_ad, a.type_id, a.target_tags as tags, a.updated_at, a.fullscreen,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -1367,59 +1407,91 @@ router.get("/feed", verifyToken, async (req, res) => {
     if (hasLocation) {
       adQuery += `
         ORDER BY 
-          (priority_score * 0.6) + 
-          (CASE WHEN geo_point IS NOT NULL THEN 
-              1 / (1 + (ST_DistanceSphere(geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
-           ELSE 0 END * 10) DESC,
-          RANDOM()
+        (priority_score * 0.6) + 
+        (CASE WHEN geo_point IS NOT NULL THEN 
+          1 / (1 + (ST_DistanceSphere(geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
+         ELSE 0 END * 10) DESC,
+         a.updated_at DESC
       `;
     } else {
-      adQuery += ` ORDER BY priority_score DESC, RANDOM() `;
+      adQuery += `
+        ORDER BY priority_score DESC, -LOG(RANDOM()) / priority_score DESC
+      `;
     }
 
-    adQuery += ` LIMIT $2 `;
+    // START: Dynamic Ad Frequency
+    const adFreq = await getAdFrequency();
+    // END: Dynamic Ad Frequency
 
-    const adsRes = await db.query(adQuery, [userId, parsedAds]);
+    const adsRes = await db.query(adQuery, [userId]);
+    const fetchedAds = adsRes.rows;
 
-    const finalData =
-      typeof mergeNewsWithAds === "function"
-        ? mergeNewsWithAds(newsRes.rows, adsRes.rows)
-        : [...newsRes.rows, ...adsRes.rows];
+    let finalNews = [];
+    let adIndex = 0;
+
+    newsRes.rows.forEach((newsItem, index) => {
+      finalNews.push(newsItem);
+      // Use the dynamic frequency
+      if ((index + 1) % adFreq === 0 && adIndex < fetchedAds.length) {
+        finalNews.push(fetchedAds[adIndex]);
+        adIndex++;
+      }
+    });
 
     res.status(200).json({
       success: true,
-      page,
-      limit: parsedLimit,
-      ads_limit: parsedAds,
-      news_count: newsRes.rows.length,
-      ads_count: adsRes.rows.length,
-      data: finalData,
+      data: finalNews,
+      pagination: {
+        limit: parsedLimit,
+        offset: newsOffset,
+        hasMore: newsRes.rows.length === parsedLimit
+      }
     });
-  } catch (err) {
-    console.error("Feed API error:", err);
+
+  } catch (error) {
+    console.error("Feed API error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-function mergeNewsWithAds(news, ads) {
+// Helper to get ad frequency
+async function getAdFrequency() {
+  try {
+    const cacheKey = 'system_settings:ad_frequency';
+    const cached = await getCache(cacheKey);
+    if (cached) return parseInt(cached);
+
+    const result = await pool.query("SELECT setting_value FROM system_settings WHERE setting_key = 'ad_frequency'");
+
+    let freq = 5; // Default
+    if (result.rows.length > 0) {
+      freq = parseInt(result.rows[0].setting_value);
+    }
+
+    await setCache(cacheKey, freq, 300); // Cache for 5 mins
+    return freq;
+  } catch (error) {
+    console.error("Error fetching ad frequency:", error);
+    return 5; // Fallback
+  }
+}
+
+async function mergeNewsWithAds(news, ads) {
   if (ads.length === 0) return news;
   if (news.length === 0) return ads;
 
+  const adFrequency = await getAdFrequency();
+
   const result = [];
-  const totalSlots = news.length + ads.length;
-
-  const adInterval = news.length / ads.length;
-
   let newsIndex = 0;
   let adsIndex = 0;
-  let nextAdPos = adInterval;
 
-  for (let i = 0; i < totalSlots; i++) {
-    if (adsIndex < ads.length && i >= Math.round(nextAdPos)) {
-      result.push(ads[adsIndex++]);
-      nextAdPos += adInterval + 1;
-    } else if (newsIndex < news.length) {
+  while (newsIndex < news.length) {
+    for (let i = 0; i < adFrequency && newsIndex < news.length; i++) {
       result.push(news[newsIndex++]);
+    }
+    if (adsIndex < ads.length) {
+      result.push(ads[adsIndex++]);
     }
   }
 
@@ -1440,12 +1512,10 @@ router.get("/", async (req, res) => {
 
     const offset = (page - 1) * limit;
 
-    // Build query conditions
     let conditions = ["is_active = true"];
     let params = [];
     let paramIndex = 1;
 
-    // UPDATED: Changed to ANY() since category is now an array
     if (category) {
       conditions.push(`$${paramIndex} = ANY(category)`);
       params.push(category);
@@ -1474,331 +1544,166 @@ router.get("/", async (req, res) => {
       ? `WHERE ${conditions.join(" AND ")}`
       : "";
 
-    // Get news with metrics
     const query = `
       SELECT 
-        n.news_id as id, 
-        n.title, 
-        n.short_description, 
-        n.content_url, 
-        n.category, 
-        n.tags, 
-        n.is_featured, 
-        n.is_breaking, 
+        n.news_id as id,
+        n.title,
+        n.short_description,
+        n.content_url,
+        n.category,
+        n.tags,
+        n.is_featured,
+        n.is_breaking,
         n.created_at,
         n.type_id,
         n.updated_at,
-        n.is_notified,
         COUNT(DISTINCT v.view_id) AS view_count,
         COUNT(DISTINCT l.like_id) AS like_count,
-        COUNT(DISTINCT c.comment_id) AS comment_count
-      FROM 
-        news n
-      LEFT JOIN 
-        views v ON n.news_id = v.news_id
-      LEFT JOIN 
-        news_likes l ON n.news_id = l.news_id
-      LEFT JOIN 
-        comments c ON n.news_id = c.news_id
+        COUNT(DISTINCT c.comment_id) AS comment_count,
+        COUNT(DISTINCT s.share_id) AS share_count
+      FROM news n
+      LEFT JOIN views v ON n.news_id = v.news_id
+      LEFT JOIN news_likes l ON n.news_id = l.news_id
+      LEFT JOIN comments c ON n.news_id = c.news_id
+      LEFT JOIN shares s ON n.news_id = s.news_id
       ${whereClause}
-      GROUP BY 
-        n.news_id
-      ORDER BY 
-        n.created_at DESC
+      GROUP BY n.news_id
+      ORDER BY n.created_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
-    params.push(parseInt(limit), offset);
+    params.push(limit, offset);
 
     const result = await db.query(query, params);
-
-    // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(*) FROM news n ${whereClause}
-    `;
-
-    const countResult = await db.query(countQuery, params.slice(0, -2));
-    const totalItems = parseInt(countResult.rows[0].count);
-    const totalPages = Math.ceil(totalItems / limit);
 
     res.status(200).json({
       success: true,
       data: result.rows,
       pagination: {
-        total_items: totalItems,
-        total_pages: totalPages,
-        current_page: parseInt(page),
+        page: parseInt(page),
         limit: parseInt(limit),
-      },
+        total: result.rowCount
+      }
     });
   } catch (error) {
-    console.error("News list fetch error:", error);
+    console.error("Error fetching news:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// Get detailed news with engagement metrics
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Get news details
     const newsQuery = `
-      SELECT 
+      SELECT
         n.*,
         a.name as author_name
-      FROM 
-        news n
-      LEFT JOIN 
-        admins a ON n.admin_id = a.admin_id
-      WHERE 
-        n.news_id = $1
+      FROM news n
+      LEFT JOIN admins a ON n.admin_id = a.admin_id
+      WHERE n.news_id = $1
     `;
 
     const newsResult = await db.query(newsQuery, [id]);
 
     if (newsResult.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "News not found" });
+      return res.status(404).json({ success: false, message: "News not found" });
     }
 
     const news = newsResult.rows[0];
 
-    // Get engagement metrics
     const metricsQuery = `
-      SELECT 
+      SELECT
         COUNT(DISTINCT v.view_id) AS view_count,
         COUNT(DISTINCT l.like_id) AS like_count,
         COUNT(DISTINCT c.comment_id) AS comment_count
-      FROM 
-        news n
-      LEFT JOIN 
-        views v ON n.news_id = v.news_id
-      LEFT JOIN 
-        news_likes l ON n.news_id = l.news_id
-      LEFT JOIN 
-        comments c ON n.news_id = c.news_id
-      WHERE 
-        n.news_id = $1
+      FROM news n
+      LEFT JOIN views v ON n.news_id = v.news_id
+      LEFT JOIN news_likes l ON n.news_id = l.news_id
+      LEFT JOIN comments c ON n.news_id = c.news_id
+      WHERE n.news_id = $1
     `;
 
     const metricsResult = await db.query(metricsQuery, [id]);
     const metrics = metricsResult.rows[0];
 
-    // Get recent comments
     const commentsQuery = `
-      SELECT 
-        c.comment_id,
-        c.content,
-        c.created_at,
-        c.user_id
-      FROM 
-        comments c
-      WHERE 
-        c.news_id = $1
-      ORDER BY 
-        c.created_at DESC
+      SELECT c.comment_id, c.content, c.created_at, c.user_id 
+      FROM comments c
+      WHERE c.news_id = $1
+      ORDER BY c.created_at DESC
       LIMIT 10
     `;
 
     const commentsResult = await db.query(commentsQuery, [id]);
-
-    // Get view details
-    const viewsQuery = `
-      SELECT 
-        COUNT(*) as count,
-        device_type,
-        DATE_TRUNC('day', viewed_at) as view_date
-      FROM 
-        views
-      WHERE 
-        news_id = $1
-      GROUP BY 
-        device_type, DATE_TRUNC('day', viewed_at)
-      ORDER BY 
-        view_date DESC
-      LIMIT 30
-    `;
-
-    const viewsResult = await db.query(viewsQuery, [id]);
 
     res.status(200).json({
       success: true,
       data: {
         ...news,
         metrics,
-        comments: commentsResult.rows,
-        view_analytics: viewsResult.rows,
-      },
+        comments: commentsResult.rows
+      }
     });
   } catch (error) {
-    console.error("News detail fetch error:", error);
+    console.error("News detail error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// Update news item (admin only)
 router.put("/:id", verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const {
-      type_id,
-      title,
-      short_description,
-      long_description,
-      content_url,
-      redirect_url,
-      tags,
-      category,
-      area_names,
-      geo_point,
-      radius_km,
-      is_strict_location,
-      is_active,
-      is_featured,
-      is_breaking,
-      priority_score,
-      relevance_expires_at,
-      expires_at,
-      fullscreen,
-      vertical_content_url,
-      square_content_url,
-      compressed_content_url,
+      type_id, title, short_description, long_description,
+      content_url, redirect_url, tags, category, area_names,
+      geo_point, radius_km, is_strict_location, is_active,
+      is_featured, is_breaking, priority_score,
+      relevance_expires_at, expires_at, fullscreen,
+      vertical_content_url, square_content_url, compressed_content_url
     } = req.body;
 
-    // Check if news exists
-    const checkResult = await db.query(
-      "SELECT * FROM news WHERE news_id = $1",
-      [id]
-    );
-
+    const checkResult = await db.query("SELECT * FROM news WHERE news_id = $1", [id]);
     if (checkResult.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "News not found" });
+      return res.status(404).json({ success: false, message: "News not found" });
     }
 
-    // Update news item
     const updateFields = [];
     const values = [];
     let paramIndex = 1;
 
-    // Build dynamic update query
-    if (type_id !== undefined) {
-      updateFields.push(`type_id = $${paramIndex++}`);
-      values.push(type_id);
-    }
+    // Helper to add field
+    const addField = (key, val) => {
+      if (val !== undefined) {
+        updateFields.push(`${key} = $${paramIndex++}`);
+        values.push(val);
+      }
+    };
 
-    if (title !== undefined) {
-      updateFields.push(`title = $${paramIndex++}`);
-      values.push(title);
-    }
+    addField("type_id", type_id);
+    addField("title", title);
+    addField("short_description", short_description);
+    addField("long_description", long_description);
+    addField("content_url", content_url);
+    addField("redirect_url", redirect_url);
+    addField("tags", tags);
+    addField("category", category);
+    addField("area_names", area_names);
+    addField("geo_point", geo_point);
+    addField("radius_km", radius_km);
+    addField("is_strict_location", is_strict_location);
+    addField("is_active", is_active);
+    addField("is_featured", is_featured);
+    addField("is_breaking", is_breaking);
+    addField("priority_score", priority_score);
+    addField("relevance_expires_at", relevance_expires_at);
+    addField("expires_at", expires_at);
+    addField("fullscreen", fullscreen);
+    addField("vertical_content_url", vertical_content_url);
+    addField("square_content_url", square_content_url);
+    addField("compressed_content_url", compressed_content_url);
 
-    if (short_description !== undefined) {
-      updateFields.push(`short_description = $${paramIndex++}`);
-      values.push(short_description);
-    }
-
-    if (long_description !== undefined) {
-      updateFields.push(`long_description = $${paramIndex++}`);
-      values.push(long_description);
-    }
-
-    if (content_url !== undefined) {
-      updateFields.push(`content_url = $${paramIndex++}`);
-      values.push(content_url);
-    }
-
-    if (redirect_url !== undefined) {
-      updateFields.push(`redirect_url = $${paramIndex++}`);
-      values.push(redirect_url);
-    }
-
-    if (tags !== undefined) {
-      updateFields.push(`tags = $${paramIndex++}`);
-      values.push(tags);
-    }
-
-    if (category !== undefined) {
-      updateFields.push(`category = $${paramIndex++}`);
-      values.push(category);
-    }
-
-    if (area_names !== undefined) {
-      updateFields.push(`area_names = $${paramIndex++}`);
-      values.push(area_names);
-    }
-
-    if (geo_point !== undefined) {
-      updateFields.push(`geo_point = $${paramIndex++}`);
-      values.push(geo_point);
-    }
-
-    if (radius_km !== undefined) {
-      updateFields.push(`radius_km = $${paramIndex++}`);
-      values.push(radius_km);
-    }
-
-    if (is_strict_location !== undefined) {
-      updateFields.push(`is_strict_location = $${paramIndex++}`);
-      values.push(is_strict_location);
-    }
-
-    if (is_active !== undefined) {
-      updateFields.push(`is_active = $${paramIndex++}`);
-      values.push(is_active);
-    }
-
-    if (is_featured !== undefined) {
-      updateFields.push(`is_featured = $${paramIndex++}`);
-      values.push(is_featured);
-    }
-
-    if (is_breaking !== undefined) {
-      updateFields.push(`is_breaking = $${paramIndex++}`);
-      values.push(is_breaking);
-    }
-
-    if (priority_score !== undefined) {
-      updateFields.push(`priority_score = $${paramIndex++}`);
-      values.push(priority_score);
-    }
-
-    if (relevance_expires_at !== undefined) {
-      updateFields.push(`relevance_expires_at = $${paramIndex++}`);
-      values.push(relevance_expires_at);
-    }
-
-    if (expires_at !== undefined) {
-      updateFields.push(`expires_at = $${paramIndex++}`);
-      values.push(expires_at);
-    }
-
-    if (fullscreen !== undefined) {
-      updateFields.push(`fullscreen = $${paramIndex++}`);
-      values.push(fullscreen);
-    }
-
-    if (vertical_content_url !== undefined) {
-      updateFields.push(`vertical_content_url = $${paramIndex++}`);
-      values.push(vertical_content_url);
-    }
-
-    if (square_content_url !== undefined) {
-      updateFields.push(`square_content_url = $${paramIndex++}`);
-      values.push(square_content_url);
-    }
-
-    if (compressed_content_url !== undefined) {
-      updateFields.push(`compressed_content_url = $${paramIndex++}`);
-      values.push(compressed_content_url);
-    }
-
-    // Always update the updated_at timestamp
-    updateFields.push(`updated_at = NOW()`);
-
-    // Add news_id as the last parameter
+    updateFields.push("updated_at = NOW()");
     values.push(id);
 
     const query = `
@@ -1821,231 +1726,105 @@ router.put("/:id", verifyAdmin, async (req, res) => {
   }
 });
 
-// Get top 10 news based on a single metric
 router.get("/top/single-metric", async (req, res) => {
   try {
     const { metric = "views", category } = req.query;
+    const VALID_METRICS = ["views", "likes", "comments", "shares", "priority_score"];
 
-    // Validate metric
     if (!VALID_METRICS.includes(metric)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid metric. Valid options are: ${VALID_METRICS.join(
-          ", "
-        )}`,
-      });
+      return res.status(400).json({ success: false, message: "Invalid metric" });
     }
 
-    // Build query based on metric
     let query = `
-      SELECT n.news_id as id, n.title, n.short_description, n.content_url, 
-        n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
+      SELECT n.news_id as id, n.title, n.short_description, n.content_url,
+      n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
     `;
 
-    // Add metric-specific count and join
-    if (metric === "views") {
-      query += `
-        COUNT(v.view_id) as view_count
-        FROM news n
-        LEFT JOIN views v ON n.news_id = v.news_id
-      `;
-    } else if (metric === "likes") {
-      query += `
-        COUNT(l.like_id) as like_count
-        FROM news n
-        LEFT JOIN news_likes l ON n.news_id = l.news_id
-      `;
-    } else if (metric === "comments") {
-      query += `
-        COUNT(c.comment_id) as comment_count
-        FROM news n
-        LEFT JOIN comments c ON n.news_id = c.news_id
-      `;
-    } else if (metric === "shares") {
-      query += `
-        COUNT(s.share_id) as share_count
-        FROM news n
-        LEFT JOIN shares s ON n.news_id = s.news_id
-      `;
-    } else if (metric === "priority_score") {
-      query += `
-        n.priority_score
-        FROM news n
-      `;
-    }
+    if (metric === "views") query += `COUNT(v.view_id) as view_count FROM news n LEFT JOIN views v ON n.news_id = v.news_id`;
+    else if (metric === "likes") query += `COUNT(l.like_id) as like_count FROM news n LEFT JOIN news_likes l ON n.news_id = l.news_id`;
+    else if (metric === "comments") query += `COUNT(c.comment_id) as comment_count FROM news n LEFT JOIN comments c ON n.news_id = c.news_id`;
+    else if (metric === "shares") query += `COUNT(s.share_id) as share_count FROM news n LEFT JOIN shares s ON n.news_id = s.news_id`;
+    else if (metric === "priority_score") query += `n.priority_score FROM news n`;
 
-    // UPDATED: Changed WHERE clause for array comparison
     if (category) {
-      // Logic: Does the news category array contain the query param?
       query += ` WHERE $1 = ANY(n.category) AND n.is_active = true`;
     } else {
       query += ` WHERE n.is_active = true`;
     }
 
-    // Add GROUP BY for aggregated metrics
-    if (metric !== "priority_score") {
-      query += ` GROUP BY n.news_id`;
-    }
+    if (metric !== "priority_score") query += ` GROUP BY n.news_id`;
 
-    // Add ORDER BY based on metric
-    if (metric === "views") {
-      query += ` ORDER BY view_count DESC`;
-    } else if (metric === "likes") {
-      query += ` ORDER BY like_count DESC`;
-    } else if (metric === "comments") {
-      query += ` ORDER BY comment_count DESC`;
-    } else if (metric === "shares") {
-      query += ` ORDER BY share_count DESC`;
-    } else if (metric === "priority_score") {
-      query += ` ORDER BY n.priority_score DESC`;
-    }
+    if (metric === "views") query += ` ORDER BY view_count DESC`;
+    else if (metric === "likes") query += ` ORDER BY like_count DESC`;
+    else if (metric === "comments") query += ` ORDER BY comment_count DESC`;
+    else if (metric === "shares") query += ` ORDER BY share_count DESC`;
+    else if (metric === "priority_score") query += ` ORDER BY n.priority_score DESC`;
 
-    // Limit to top 10
     query += ` LIMIT 10`;
 
-    // Execute query
-    const result = category
-      ? await pool.query(query, [category])
-      : await pool.query(query);
+    const result = category ? await db.query(query, [category]) : await db.query(query);
 
-    res.json({
-      success: true,
-      metric: metric,
-      data: result.rows,
-    });
+    res.json({ success: true, metric, data: result.rows });
   } catch (error) {
-    console.error("Error fetching top news by single metric:", error);
+    console.error("Error single metric:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// Get top 10 news based on multiple metrics with priority
 router.get("/top/multi-metric", async (req, res) => {
   try {
-    const {
-      metrics = "views,likes,comments",
-      weights = "0.5,0.3,0.2",
-      category,
-    } = req.query;
+    const { metrics = "views,likes,comments", weights = "0.5,0.3,0.2", category } = req.query;
+    const VALID_METRICS = ["views", "likes", "comments", "shares", "priority_score"];
 
-    // Parse metrics and weights
     const metricsList = metrics.split(",");
-    const weightsList = weights.split(",").map((w) => parseFloat(w));
+    const weightsList = weights.split(",").map(w => parseFloat(w));
 
-    // Validate metrics and weights
     if (metricsList.length !== weightsList.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Number of metrics must match number of weights",
-      });
+      return res.status(400).json({ success: false, message: "Metrics/weights mismatch" });
     }
 
-    for (const metric of metricsList) {
-      if (!VALID_METRICS.includes(metric)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid metric: ${metric}. Valid options are: ${VALID_METRICS.join(
-            ", "
-          )}`,
-        });
-      }
-    }
-
-    // Validate weights sum to 1.0 (approximately)
-    const weightSum = weightsList.reduce((sum, weight) => sum + weight, 0);
-    if (Math.abs(weightSum - 1.0) > 0.01) {
-      return res.status(400).json({
-        success: false,
-        message: "Weights must sum to 1.0",
-      });
-    }
-
-    // Build complex query with weighted score
-    let query = `
-      SELECT n.news_id as id, n.title, n.short_description, n.content_url, 
-        n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
-    `;
-
-    // Add subqueries for each metric
     let scoreComponents = [];
     let joins = [];
 
     metricsList.forEach((metric, index) => {
       const weight = weightsList[index];
-
       if (metric === "views") {
         scoreComponents.push(`(COALESCE(view_count, 0) * ${weight})`);
-        joins.push(`
-          LEFT JOIN (
-            SELECT news_id, COUNT(*) as view_count
-            FROM views
-            GROUP BY news_id
-          ) v ON n.news_id = v.news_id
-        `);
+        joins.push(`LEFT JOIN (SELECT news_id, COUNT(*) as view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id`);
       } else if (metric === "likes") {
         scoreComponents.push(`(COALESCE(like_count, 0) * ${weight})`);
-        joins.push(`
-          LEFT JOIN (
-            SELECT news_id, COUNT(*) as like_count
-            FROM news_likes
-            GROUP BY news_id
-          ) l ON n.news_id = l.news_id
-        `);
+        joins.push(`LEFT JOIN (SELECT news_id, COUNT(*) as like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id`);
       } else if (metric === "comments") {
         scoreComponents.push(`(COALESCE(comment_count, 0) * ${weight})`);
-        joins.push(`
-          LEFT JOIN (
-            SELECT news_id, COUNT(*) as comment_count
-            FROM comments
-            GROUP BY news_id
-          ) c ON n.news_id = c.news_id
-        `);
+        joins.push(`LEFT JOIN (SELECT news_id, COUNT(*) as comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id`);
       } else if (metric === "shares") {
         scoreComponents.push(`(COALESCE(share_count, 0) * ${weight})`);
-        joins.push(`
-          LEFT JOIN (
-            SELECT news_id, COUNT(*) as share_count
-            FROM shares
-            GROUP BY news_id
-          ) s ON n.news_id = s.news_id
-        `);
+        joins.push(`LEFT JOIN (SELECT news_id, COUNT(*) as share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id`);
       } else if (metric === "priority_score") {
         scoreComponents.push(`(COALESCE(n.priority_score, 0) * ${weight})`);
       }
     });
 
-    // Add weighted score calculation
-    query += `(${scoreComponents.join(" + ")}) as weighted_score
+    let query = `
+      SELECT n.news_id as id, n.title, n.short_description, n.content_url, n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
+      (${scoreComponents.join(" + ")}) as weighted_score
       FROM news n
       ${joins.join("\n")}
     `;
 
-    // UPDATED: Changed WHERE clause for array comparison
     if (category) {
       query += ` WHERE $1 = ANY(n.category) AND n.is_active = true`;
     } else {
       query += ` WHERE n.is_active = true`;
     }
 
-    // Add ORDER BY for weighted score
-    query += ` ORDER BY weighted_score DESC`;
+    query += ` ORDER BY weighted_score DESC LIMIT 10`;
 
-    // Limit to top 10
-    query += ` LIMIT 10`;
+    const result = category ? await db.query(query, [category]) : await db.query(query);
 
-    // Execute query
-    const result = category
-      ? await pool.query(query, [category])
-      : await pool.query(query);
-
-    res.json({
-      success: true,
-      metrics: metricsList,
-      weights: weightsList,
-      data: result.rows,
-    });
+    res.json({ success: true, metrics: metricsList, weights: weightsList, data: result.rows });
   } catch (error) {
-    console.error("Error fetching top news by multiple metrics:", error);
+    console.error("Error multi metric:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });

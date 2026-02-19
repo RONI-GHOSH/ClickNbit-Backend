@@ -39,8 +39,8 @@ async function seed() {
         console.log('✅ Users table created/verified');
 
         // 3. Create Default Admin
-        const email = 'admin@example.com';
-        const password = 'password123';
+        const email = 'admin@digontom.com';
+        const password = 'password1234';
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(password, salt);
 
