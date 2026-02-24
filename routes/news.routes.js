@@ -1337,13 +1337,22 @@ if (afterTime) {
   ? conditions.join(" AND ")
   : "n.is_active = true";
       let orderByClause = hasLocation && !isFiltered
-        ? `(
-            (n.priority_score * 0.6) + 
-            (CASE WHEN n.geo_point IS NOT NULL THEN 
-              1 / (1 + (ST_DistanceSphere(n.geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
-            ELSE 0 END * 10)
-           ) DESC, n.created_at DESC`
-        : `n.created_at DESC`;
+  ? `ORDER BY 
+      (n.priority_score * 0.6 + 
+      (CASE WHEN n.geo_point IS NOT NULL THEN 
+        1 / (1 + (ST_DistanceSphere(n.geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
+       ELSE 0 END * 10)
+      ) DESC,
+      n.created_at DESC`
+  : `ORDER BY n.created_at DESC`;
+      // let orderByClause = hasLocation && !isFiltered
+      //   ? `(
+      //       (n.priority_score * 0.6) + 
+      //       (CASE WHEN n.geo_point IS NOT NULL THEN 
+      //         1 / (1 + (ST_DistanceSphere(n.geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
+      //       ELSE 0 END * 10)
+      //      ) DESC, n.created_at DESC`
+      //   : `n.created_at DESC`;
 
       let limitIdx = params.length + 1;
       let offsetIdx = params.length + 2;
