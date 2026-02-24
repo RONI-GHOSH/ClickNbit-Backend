@@ -1309,9 +1309,33 @@ router.get("/feed", verifyToken, async (req, res) => {
         return 3; // Fallback
       }
     };
+let params = [userId];
+let paramIdx = 2;
 
+let conditions = ["n.is_active = true"];
+
+// Exclude viewed news unless fallback
+if (type !== "all") {
+  conditions.push(`n.type_id = $${paramIdx}`);
+  params.push(type);
+  paramIdx++;
+}
+
+if (category) {
+  conditions.push(`(SELECT array_agg(LOWER(c)) FROM unnest(n.category) c) && $${paramIdx}`);
+  params.push(category);
+  paramIdx++;
+}
+
+if (afterTime) {
+  conditions.push(`n.created_at > $${paramIdx}`);
+  params.push(new Date(afterTime));
+  paramIdx++;
+}
     const buildNewsQuery = async (isFiltered = false) => {
-      let whereClause = isFiltered ? conditions.join(" AND ") : "is_active = true";
+      let whereClause = isFiltered
+  ? conditions.join(" AND ")
+  : "n.is_active = true";
       let orderByClause = hasLocation && !isFiltered
         ? `(
             (n.priority_score * 0.6) + 
