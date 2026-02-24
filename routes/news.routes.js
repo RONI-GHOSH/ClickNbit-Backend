@@ -573,41 +573,368 @@ router.delete("/manual-top10/:rank", verifyToken, async (req, res) => {
 //   }
 // });
 
+// router.get("/top10", async (req, res) => {
+//   try {
+//     const { ads = 0 } = req.query;
+//     const fixedLimit = 10;
+//     const adLimit = parseInt(ads) || 0;
+//     const userId = req.user?.id || null;
+
+//     let categories = req.query.category ?? req.query["category[]"] ?? "all";
+//     if (typeof categories === "string") categories = [categories];
+//     categories = categories.map((c) => c.toLowerCase());
+
+//     let finalNews = [];
+//     let lookbackDay = 0;
+//     const maxLookback = 30;
+//     const cacheKey = `top10:v1:cat=${categories
+//       .sort()
+//       .join(",")}:ads=${adLimit}`;
+
+//     const cached = await getCache(cacheKey);
+//     if (cached) {
+//       return res.status(200).json({
+//         success: true,
+//         cached: true,
+//         limit: fixedLimit,
+//         adsInserted: cached.adsInserted,
+//         daysChecked: cached.daysChecked,
+//         categories,
+//         totalReturned: cached.data.length,
+//         data: cached.data,
+//       });
+//     }
+
+//     // 1. Fetch Manual Overrides
+//     const manualRes = await pool.query(
+//       `SELECT m.rank, n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+//               n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
+//               n.priority_score, n.fullscreen,
+//               n.vertical_content_url, n.square_content_url, n.compressed_content_url,
+//               COALESCE(v.view_count, 0) AS view_count,
+//               COALESCE(l.like_count, 0) AS like_count,
+//               COALESCE(c.comment_count, 0) AS comment_count,
+//               COALESCE(s.share_count, 0) AS share_count,
+//               CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+//               CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+//        FROM manual_top_news m
+//        JOIN news n ON m.news_id = n.news_id
+//        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+//        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+//        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+//        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+//        LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
+//        LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
+//        WHERE n.is_active = true
+//        ORDER BY m.rank ASC`,
+//       [userId]
+//     );
+
+//     const manualOverrides = {}; // Map rank -> news item
+//     const manualNewsIds = new Set();
+
+//     manualRes.rows.forEach(row => {
+//       manualOverrides[row.rank] = row;
+//       manualNewsIds.add(row.news_id);
+//     });
+
+//     // 2. Fetch Algorithmic Candidates (excluding manual IDs)
+//     // We need enough items to fill the gaps. Safe bet is fetching fixedLimit items.
+
+//     while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
+//       const needed = fixedLimit; // Fetch full batch to filter safely
+
+//       const params = [];
+//       let paramIndex = 1;
+
+//       let newsWhereClause = `n.is_active = true`;
+
+//       params.push(userId);
+//       const userIdParam = `$${paramIndex++}`;
+
+//       if (!categories.includes("all")) {
+//         newsWhereClause += `
+//           AND EXISTS (
+//             SELECT 1
+//             FROM unnest(n.category) c
+//             WHERE LOWER(c) = ANY($${paramIndex}::text[])
+//           )
+//         `;
+//         params.push(categories);
+//         paramIndex++;
+//       }
+
+//       const daysAgoStart = lookbackDay;
+//       const daysAgoEnd = lookbackDay + 1;
+
+//       params.push(daysAgoStart);
+//       const pStart = `$${paramIndex++}`;
+
+//       params.push(daysAgoEnd);
+//       const pEnd = `$${paramIndex++}`;
+
+//       newsWhereClause += ` 
+//         AND n.created_at <= NOW() - (${pStart} || ' days')::interval
+//         AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
+//       `;
+
+//       // Exclude manually pinned news from the algo query to avoid duplicates
+//       if (manualNewsIds.size > 0) {
+//         const manualIdsArray = Array.from(manualNewsIds);
+//         newsWhereClause += ` AND n.news_id != ANY($${paramIndex}::int[])`;
+//         params.push(manualIdsArray);
+//         paramIndex++;
+//       }
+
+//       params.push(needed);
+//       const pLimit = `$${paramIndex++}`;
+
+//       const query = `
+//         SELECT 
+//            n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+//            n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
+//            n.priority_score, n.fullscreen,
+//            n.vertical_content_url,
+//            n.square_content_url,
+//            n.compressed_content_url,
+//            COALESCE(v.view_count, 0) AS view_count,
+//            COALESCE(l.like_count, 0) AS like_count,
+//            COALESCE(c.comment_count, 0) AS comment_count,
+//            COALESCE(s.share_count, 0) AS share_count,
+//            CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+//            CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+//         FROM news n
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
+//         LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
+//         LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
+//         LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
+//         WHERE ${newsWhereClause}
+//         ORDER BY (
+//           (COALESCE(v.view_count, 0) * 0.4) +
+//           (COALESCE(l.like_count, 0) * 0.3) +
+//           (COALESCE(c.comment_count, 0) * 0.2) +
+//           (COALESCE(s.share_count, 0) * 0.1) +
+//           (COALESCE(n.priority_score, 0) * 0.5)
+//         ) DESC
+//         LIMIT ${pLimit}
+//       `;
+
+//       const result = await pool.query(query, params);
+
+//       if (result.rows.length > 0) {
+//         finalNews = finalNews.concat(result.rows);
+//       }
+
+//       lookbackDay++;
+//     }
+
+//     // 3. Merge Lists
+//     // Create a final array of length 10
+//     const mergedList = [];
+//     let algoIndex = 0;
+
+//     for (let rank = 1; rank <= fixedLimit; rank++) {
+//       if (manualOverrides[rank]) {
+//         mergedList.push(manualOverrides[rank]);
+//       } else {
+//         // Take next available from algo list
+//         if (algoIndex < finalNews.length) {
+//           mergedList.push(finalNews[algoIndex]);
+//           algoIndex++;
+//         }
+//       }
+//     }
+
+//     // Replace finalNews with mergedList for downstream processing
+//     finalNews = mergedList;
+
+//     finalNews = finalNews.map((item, index) => ({
+//       ...item,
+//       id: item.news_id,
+//       description: item.short_description,
+//       rn: index + 1,
+//     }));
+
+//     let adsResult = [];
+//     if (adLimit > 0) {
+//       const adsQuery = `
+//         SELECT 
+//         a.ad_id AS id,
+//         a.title,
+//         a.description,
+//         a.content_url,
+//         a.redirect_url,
+//         a.is_featured,
+//         a.category,
+//         a.is_ad,
+//         a.target_tags as tags,
+//         a.type_id,
+//         a.updated_at,
+//         a.fullscreen,
+//                                             /* Ad metrics joins... */
+//                                                                                         COALESCE(v.view_count, 0) AS view_count,
+//                                                                                                   COALESCE(l.like_count, 0) AS like_count,
+//                                                                                                             COALESCE(c.comment_count, 0) AS comment_count,
+//                                                                                                                       COALESCE(s.share_count, 0) AS share_count,
+//                                                                                                                                 CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+//                                                                                                                                           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+//                                                                                                                                                   FROM advertisements a
+//                                                                                                                                                           LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+//                                                                                                                                                                   LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+//                                                                                                                                                                           LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+//                                                                                                                                                                                   LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+//                                                                                                                                                                                           LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
+//                                                                                                                                                                                                   LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
+//                                                                                                                                                                                                           WHERE a.is_active = true AND a.format_id = 2
+//                                                                                                                                                                                                                   ORDER BY a.created_at DESC
+//                                                                                                                                                                                                                           LIMIT $1
+//                                                                                                                                                                                                                                           `;
+//       adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
+//     }
+
+//     const finalData = mergeNewsWithAds(finalNews, adsResult);
+//     // ---- Top10 TTL ----
+//     // Trending data changes, but not every second
+//     await setCache(
+//       cacheKey,
+//       {
+//         data: finalData,
+//         adsInserted: adsResult.length,
+//         daysChecked: lookbackDay,
+//       },
+//       120 // 2 minutes
+//     );
+
+//     res.status(200).json({
+//       success: true,
+//       limit: fixedLimit,
+//       adsInserted: adsResult.length,
+//       daysChecked: lookbackDay,
+//       categories,
+//       totalReturned: finalData.length,
+//       data: finalData,
+//     });
+//   } catch (error) {
+//     console.error("Top10 fetch error:", error);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
 router.get("/top10", async (req, res) => {
-  try {
-    const { ads = 0 } = req.query;
-    const fixedLimit = 10;
-    const adLimit = parseInt(ads) || 0;
-    const userId = req.user?.id || null;
+    try {
+        const { ads = 0 } = req.query;
+        const fixedLimit = 10;
+        const adLimit = parseInt(ads) || 0;
+        const userId = req.user?.id || null;
 
-    let categories = req.query.category ?? req.query["category[]"] ?? "all";
-    if (typeof categories === "string") categories = [categories];
-    categories = categories.map((c) => c.toLowerCase());
+        let categories = req.query.category ?? req.query["category[]"] ?? "all";
+        if (typeof categories === "string") categories = [categories];
+        categories = categories.map((c) => c.toLowerCase());
 
-    let finalNews = [];
-    let lookbackDay = 0;
-    const maxLookback = 30;
-    const cacheKey = `top10:v1:cat=${categories
-      .sort()
-      .join(",")}:ads=${adLimit}`;
+        let finalNews = [];
+        let lookbackDay = 0;
+        const maxLookback = 30;
+        const cacheKey = `top10:v1:cat=${categories
+            .sort()
+            .join(",")}:ads=${adLimit}`;
 
-    const cached = await getCache(cacheKey);
-    if (cached) {
-      return res.status(200).json({
-        success: true,
-        cached: true,
-        limit: fixedLimit,
-        adsInserted: cached.adsInserted,
-        daysChecked: cached.daysChecked,
-        categories,
-        totalReturned: cached.data.length,
-        data: cached.data,
-      });
-    }
+        const cached = await getCache(cacheKey);
+        if (cached) {
+            // PERMANENT FIX: Even on cache hit, we MUST fetch live user data (is_liked, is_saved)
+            // and ALSO insert ads, and ALSO format the data correctly for the app.
+            let enrichedData = cached.data;
 
-    // 1. Fetch Manual Overrides
-    const manualRes = await pool.query(
-      `SELECT m.rank, n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
+            if (userId && cached.data.length > 0) {
+                const newsIds = cached.data.map(n => n.news_id);
+                const interactionsRes = await pool.query(`
+          SELECT news_id, 'like' as type FROM news_likes WHERE user_id = $1 AND news_id = ANY($2::int[])
+          UNION ALL
+          SELECT id as news_id, 'save' as type FROM saves WHERE user_id = $1 AND id = ANY($2::int[]) AND is_ad = false
+        `, [userId, newsIds]);
+
+                const userLikedIds = new Set();
+                const userSavedIds = new Set();
+                interactionsRes.rows.forEach(row => {
+                    if (row.type === 'like') userLikedIds.add(row.news_id);
+                    if (row.type === 'save') userSavedIds.add(row.news_id);
+                });
+
+                enrichedData = cached.data.map(item => ({
+                    ...item,
+                    is_liked: userLikedIds.has(item.news_id),
+                    is_saved: userSavedIds.has(item.news_id)
+                }));
+            }
+
+            // MAPPING & FORMATTING (Crucial for app compatibility)
+            const formattedNews = enrichedData.map((item, index) => ({
+                ...item,
+                id: item.news_id.toString(),
+                description: item.short_description || item.description,
+                rn: index + 1,
+                // App expects these as Strings for int.parse
+                view_count: (item.view_count || 0).toString(),
+                like_count: (item.like_count || 0).toString(),
+                comment_count: (item.comment_count || 0).toString(),
+                share_count: (item.share_count || 0).toString(),
+            }));
+
+            // Fetch and insert ads even on cache hit
+            let adsResult = [];
+            if (adLimit > 0) {
+                const adsQuery = `
+                    SELECT 
+                        a.ad_id::text AS id,
+                        a.title,
+                        a.description,
+                        a.content_url,
+                        a.redirect_url,
+                        a.is_featured,
+                        a.category,
+                        a.is_ad,
+                        a.target_tags as tags,
+                        a.type_id,
+                        a.updated_at,
+                        a.fullscreen,
+                        false as is_breaking,
+                        COALESCE(v.view_count, 0)::text AS view_count,
+                        COALESCE(l.like_count, 0)::text AS like_count,
+                        COALESCE(c.comment_count, 0)::text AS comment_count,
+                        COALESCE(s.share_count, 0)::text AS share_count,
+                        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+                        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+                    FROM advertisements a
+                    LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+                    LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+                    LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+                    LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+                    LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
+                    LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
+                    WHERE a.is_active = true AND a.format_id = 2
+                    ORDER BY -LOG(RANDOM()) / (CASE WHEN a.priority_score <= 0 THEN 0.1 ELSE a.priority_score END) DESC
+                    LIMIT $1
+                `;
+                adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
+            }
+
+            const finalData = await mergeNewsWithAds(formattedNews, adsResult);
+
+            return res.status(200).json({
+                success: true,
+                cached: true,
+                limit: fixedLimit,
+                adsInserted: adsResult.length,
+                daysChecked: cached.daysChecked,
+                categories,
+                totalReturned: finalData.length,
+                data: finalData,
+            });
+        }
+
+        // 1. Fetch Manual Overrides (Global - No User Context)
+        const manualRes = await pool.query(
+            `SELECT m.rank, n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
               n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
               n.priority_score, n.fullscreen,
               n.vertical_content_url, n.square_content_url, n.compressed_content_url,
@@ -615,81 +942,78 @@ router.get("/top10", async (req, res) => {
               COALESCE(l.like_count, 0) AS like_count,
               COALESCE(c.comment_count, 0) AS comment_count,
               COALESCE(s.share_count, 0) AS share_count,
-              CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-              CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+              false AS is_liked,
+              false AS is_saved
        FROM manual_top_news m
        JOIN news n ON m.news_id = n.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-       LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = $1
-       LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = $1 AND sv.is_ad = false
        WHERE n.is_active = true
        ORDER BY m.rank ASC`,
-      [userId]
-    );
+            []
+        );
 
-    const manualOverrides = {}; // Map rank -> news item
-    const manualNewsIds = new Set();
+        const manualOverrides = {}; // Map rank -> news item
+        const manualNewsIds = new Set();
 
-    manualRes.rows.forEach(row => {
-      manualOverrides[row.rank] = row;
-      manualNewsIds.add(row.news_id);
-    });
+        manualRes.rows.forEach(row => {
+            manualOverrides[row.rank] = row;
+            manualNewsIds.add(row.news_id);
+        });
 
-    // 2. Fetch Algorithmic Candidates (excluding manual IDs)
-    // We need enough items to fill the gaps. Safe bet is fetching fixedLimit items.
+        // 2. Fetch Algorithmic Candidates (excluding manual IDs)
+        // We need enough items to fill the gaps. Safe bet is fetching fixedLimit items.
 
-    while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
-      const needed = fixedLimit; // Fetch full batch to filter safely
+        while (finalNews.length < fixedLimit && lookbackDay < maxLookback) {
+            const needed = fixedLimit; // Fetch full batch to filter safely
 
-      const params = [];
-      let paramIndex = 1;
+            const params = [];
+            let paramIndex = 1;
 
-      let newsWhereClause = `n.is_active = true`;
+            let newsWhereClause = `n.is_active = true`;
 
-      params.push(userId);
-      const userIdParam = `$${paramIndex++}`;
+            // REMOVED: userId from params
 
-      if (!categories.includes("all")) {
-        newsWhereClause += `
+            if (!categories.includes("all")) {
+                newsWhereClause += `
           AND EXISTS (
             SELECT 1
             FROM unnest(n.category) c
             WHERE LOWER(c) = ANY($${paramIndex}::text[])
           )
         `;
-        params.push(categories);
-        paramIndex++;
-      }
+                params.push(categories);
+                paramIndex++;
+            }
 
-      const daysAgoStart = lookbackDay;
-      const daysAgoEnd = lookbackDay + 1;
+            const daysAgoStart = lookbackDay;
+            const daysAgoEnd = lookbackDay + 1;
 
-      params.push(daysAgoStart);
-      const pStart = `$${paramIndex++}`;
+            params.push(daysAgoStart);
+            const pStart = `$${paramIndex++}`;
 
-      params.push(daysAgoEnd);
-      const pEnd = `$${paramIndex++}`;
+            params.push(daysAgoEnd);
+            const pEnd = `$${paramIndex++}`;
 
-      newsWhereClause += ` 
+            newsWhereClause += ` 
         AND n.created_at <= NOW() - (${pStart} || ' days')::interval
         AND n.created_at >  NOW() - (${pEnd} || ' days')::interval
       `;
 
-      // Exclude manually pinned news from the algo query to avoid duplicates
-      if (manualNewsIds.size > 0) {
-        const manualIdsArray = Array.from(manualNewsIds);
-        newsWhereClause += ` AND n.news_id != ANY($${paramIndex}::int[])`;
-        params.push(manualIdsArray);
-        paramIndex++;
-      }
+            // Exclude manually pinned news from the algo query to avoid duplicates
+            if (manualNewsIds.size > 0) {
+                const manualIdsArray = Array.from(manualNewsIds);
+                newsWhereClause += ` AND n.news_id != ANY($${paramIndex}::int[])`;
+                params.push(manualIdsArray);
+                paramIndex++;
+            }
 
-      params.push(needed);
-      const pLimit = `$${paramIndex++}`;
+            params.push(needed);
+            const pLimit = `$${paramIndex++}`;
 
-      const query = `
+            const query = `
         SELECT 
            n.news_id, n.title, n.short_description, n.content_url, n.redirect_url,
            n.is_featured, n.is_breaking, n.category, n.tags, n.is_ad, n.type_id, n.updated_at,
@@ -701,15 +1025,13 @@ router.get("/top10", async (req, res) => {
            COALESCE(l.like_count, 0) AS like_count,
            COALESCE(c.comment_count, 0) AS comment_count,
            COALESCE(s.share_count, 0) AS share_count,
-           CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-           CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+           false AS is_liked,
+           false AS is_saved
         FROM news n
         LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON n.news_id = v.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON n.news_id = l.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON n.news_id = c.news_id
         LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON n.news_id = s.news_id
-        LEFT JOIN news_likes ul ON ul.news_id = n.news_id AND ul.user_id = ${userIdParam}
-        LEFT JOIN saves sv ON sv.id = n.news_id AND sv.user_id = ${userIdParam} AND sv.is_ad = false
         WHERE ${newsWhereClause}
         ORDER BY (
           (COALESCE(v.view_count, 0) * 0.4) +
@@ -721,105 +1043,138 @@ router.get("/top10", async (req, res) => {
         LIMIT ${pLimit}
       `;
 
-      const result = await pool.query(query, params);
+            const result = await pool.query(query, params);
 
-      if (result.rows.length > 0) {
-        finalNews = finalNews.concat(result.rows);
-      }
+            if (result.rows.length > 0) {
+                finalNews = finalNews.concat(result.rows);
+            }
 
-      lookbackDay++;
-    }
-
-    // 3. Merge Lists
-    // Create a final array of length 10
-    const mergedList = [];
-    let algoIndex = 0;
-
-    for (let rank = 1; rank <= fixedLimit; rank++) {
-      if (manualOverrides[rank]) {
-        mergedList.push(manualOverrides[rank]);
-      } else {
-        // Take next available from algo list
-        if (algoIndex < finalNews.length) {
-          mergedList.push(finalNews[algoIndex]);
-          algoIndex++;
+            lookbackDay++;
         }
-      }
-    }
 
-    // Replace finalNews with mergedList for downstream processing
-    finalNews = mergedList;
+        // 3. Merge Lists and Cache Global Result
+        const mergedList = [];
+        let algoIndex = 0;
 
-    finalNews = finalNews.map((item, index) => ({
-      ...item,
-      id: item.news_id,
-      description: item.short_description,
-      rn: index + 1,
-    }));
+        for (let rank = 1; rank <= fixedLimit; rank++) {
+            if (manualOverrides[rank]) {
+                mergedList.push(manualOverrides[rank]);
+            } else {
+                if (algoIndex < finalNews.length) {
+                    mergedList.push(finalNews[algoIndex]);
+                    algoIndex++;
+                }
+            }
+        }
 
-    let adsResult = [];
-    if (adLimit > 0) {
-      const adsQuery = `
+        // Cache the GLOBAL list (no user specific data yet)
+        // We already checked cache at the start. If we are here, we missed cache.
+        // So we cache strictly the `mergedList` which only contains public data now.
+
+        // Ensure data cached matches structure
+        const globalDataToCache = {
+            adsInserted: 0, // Placeholder
+            daysChecked: lookbackDay,
+            data: mergedList
+        };
+
+        // Cache for 5 minutes (300 sec)
+        await setCache(cacheKey, globalDataToCache, 300);
+
+        // 4. Enrich with User Data (Live)
+        let userLikedIds = new Set();
+        let userSavedIds = new Set();
+
+        if (userId && mergedList.length > 0) {
+            const newsIds = mergedList.map(n => n.news_id);
+
+            const interactionsRes = await pool.query(`
+        SELECT news_id, 'like' as type FROM news_likes WHERE user_id = $1 AND news_id = ANY($2::int[])
+        UNION ALL
+        SELECT id as news_id, 'save' as type FROM saves WHERE user_id = $1 AND id = ANY($2::int[]) AND is_ad = false
+      `, [userId, newsIds]);
+
+            interactionsRes.rows.forEach(row => {
+                if (row.type === 'like') userLikedIds.add(row.news_id);
+                if (row.type === 'save') userSavedIds.add(row.news_id);
+            });
+        }
+
+        // 5. Final Response Construction
+        const dataWithUserStatus = mergedList.map(item => ({
+            ...item,
+            is_liked: userLikedIds.has(item.news_id),
+            is_saved: userSavedIds.has(item.news_id)
+        }));
+
+        // Proceed with downstream processing (Ads, formatting) using the enriched list
+        finalNews = dataWithUserStatus;
+
+        finalNews = finalNews.map((item, index) => ({
+            ...item,
+            id: item.news_id.toString(),
+            description: item.short_description,
+            rn: index + 1,
+            // Cast numeric fields to string to satisfy Dart int.parse()
+            view_count: (item.view_count || 0).toString(),
+            like_count: (item.like_count || 0).toString(),
+            comment_count: (item.comment_count || 0).toString(),
+            share_count: (item.share_count || 0).toString(),
+        }));
+
+        let adsResult = [];
+        if (adLimit > 0) {
+            const adsQuery = `
         SELECT 
-        a.ad_id AS id,
+        a.ad_id::text AS id,
         a.title,
         a.description,
         a.content_url,
         a.redirect_url,
         a.is_featured,
+        false as is_breaking,
         a.category,
         a.is_ad,
         a.target_tags as tags,
         a.type_id,
         a.updated_at,
         a.fullscreen,
-                                            /* Ad metrics joins... */
-                                                                                        COALESCE(v.view_count, 0) AS view_count,
-                                                                                                  COALESCE(l.like_count, 0) AS like_count,
-                                                                                                            COALESCE(c.comment_count, 0) AS comment_count,
-                                                                                                                      COALESCE(s.share_count, 0) AS share_count,
-                                                                                                                                CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
-                                                                                                                                          CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
-                                                                                                                                                  FROM advertisements a
-                                                                                                                                                          LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
-                                                                                                                                                                  LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
-                                                                                                                                                                          LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
-                                                                                                                                                                                  LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
-                                                                                                                                                                                          LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
-                                                                                                                                                                                                  LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
-                                                                                                                                                                                                          WHERE a.is_active = true AND a.format_id = 2
-                                                                                                                                                                                                                  ORDER BY a.created_at DESC
-                                                                                                                                                                                                                          LIMIT $1
-                                                                                                                                                                                                                                          `;
-      adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
+        /* Ad metrics joins... */
+        COALESCE(v.view_count, 0)::text AS view_count,
+        COALESCE(l.like_count, 0)::text AS like_count,
+        COALESCE(c.comment_count, 0)::text AS comment_count,
+        COALESCE(s.share_count, 0)::text AS share_count,
+        CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+        CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
+        FROM advertisements a
+        LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.news_id
+        LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.news_id
+        LEFT JOIN news_likes ul ON ul.news_id = a.ad_id AND ul.user_id = $2
+        LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
+        WHERE a.is_active = true AND a.format_id = 2
+        ORDER BY -LOG(RANDOM()) / (CASE WHEN a.priority_score <= 0 THEN 0.1 ELSE a.priority_score END) DESC
+        LIMIT $1
+      `;
+            adsResult = (await pool.query(adsQuery, [adLimit, userId])).rows;
+        }
+
+        const finalData = await mergeNewsWithAds(finalNews, adsResult);
+
+        res.status(200).json({
+            success: true,
+            limit: fixedLimit,
+            adsInserted: adsResult.length,
+            daysChecked: lookbackDay,
+            categories,
+            totalReturned: finalData.length,
+            data: finalData,
+        });
+    } catch (error) {
+        console.error("Top10 fetch error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
     }
-
-    const finalData = mergeNewsWithAds(finalNews, adsResult);
-    // ---- Top10 TTL ----
-    // Trending data changes, but not every second
-    await setCache(
-      cacheKey,
-      {
-        data: finalData,
-        adsInserted: adsResult.length,
-        daysChecked: lookbackDay,
-      },
-      120 // 2 minutes
-    );
-
-    res.status(200).json({
-      success: true,
-      limit: fixedLimit,
-      adsInserted: adsResult.length,
-      daysChecked: lookbackDay,
-      categories,
-      totalReturned: finalData.length,
-      data: finalData,
-    });
-  } catch (error) {
-    console.error("Top10 fetch error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
 });
 
 router.get("/public", async (req, res) => {
