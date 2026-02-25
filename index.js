@@ -51,7 +51,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
     'https://clicknbit-backend.vercel.app',
     'https://clickbit-admin-panel-djhg.vercel.app',
     'https://click-nbit-editor.vercel.app',
-    'https://clickbit-admin-panel.vercel.app'
+    'https://clickbit-admin-panel.vercel.app',
+    'https://clickbit-admin-panel-cwvz.vercel.app'
   ];
 
 // Add localhost for development
