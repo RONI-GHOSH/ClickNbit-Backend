@@ -37,7 +37,8 @@ const allowedOrigins = [
   'https://clicknbitadminvercelapp.vercel.app',
   'https://admin.clicknbit.in',
   'https://editor.clicknbit.in',
-  'https://clicknbit-backend.vercel.app'
+  'https://clicknbit-backend.vercel.app',
+  'https://click-nbit-editor.vercel.app'
 ];
 
 // Add localhost for development
