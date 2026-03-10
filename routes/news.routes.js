@@ -1894,7 +1894,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       return { sql, params: queryParams };
     };
 
-    let queryData = await buildNewsQuery(true);
+    let queryData = await buildNewsQuery(false);
     let newsRes = await db.query(queryData.sql, queryData.params);
 
     if (!newsRes.rows.length) {
