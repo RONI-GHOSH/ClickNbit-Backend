@@ -1281,14 +1281,14 @@ router.get("/feed", verifyToken, async (req, res) => {
     const hasLocation = !isNaN(userLat) && !isNaN(userLng);
 
     const buildNewsQuery = (isFallback = false) => {
-      console.log("Building news query for user:", userId, "isFallback:", isFallback);
+      console.error("Building news query for user:", userId, "isFallback:", isFallback);
       let params = [userId];
       let idx = 2;
 
       let whereClause = `n.news_id IS NOT NULL`;
 
       if (!isFallback) {
-        console.log("Applying view-based filtering for user:", userId);
+        console.error("Applying view-based filtering for user:", userId);
         whereClause += ` AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
       }
 
