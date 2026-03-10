@@ -1815,13 +1815,11 @@ router.get("/feed", verifyToken, async (req, res) => {
     }
     const buildNewsQuery = async (isFiltered = false) => {
       let whereClause = isFiltered
-        ? conditions.join(" AND ")
+        ? conditions.join(" AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)")
         : "n.is_active = true";
-      
-      if (!isFiltered) {
-        whereClause += ` AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
-      }
 
+      console.log(whereClause);
+      
       let orderByClause = hasLocation && !isFiltered
         ? `ORDER BY 
       (n.priority_score * 0.6 + 
@@ -1893,12 +1891,12 @@ router.get("/feed", verifyToken, async (req, res) => {
       return { sql, params: queryParams };
     };
 
-    let queryData = await buildNewsQuery(false);
+    let queryData = await buildNewsQuery(true);
     let newsRes = await db.query(queryData.sql, queryData.params);
 
     if (!newsRes.rows.length) {
       console.log("No filtered news found, fetching fallback news...");
-      queryData = await buildNewsQuery(true);
+      queryData = await buildNewsQuery(false);
       newsRes = await db.query(queryData.sql, queryData.params);
     }
 
