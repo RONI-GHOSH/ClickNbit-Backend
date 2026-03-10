@@ -1281,6 +1281,7 @@ router.get("/feed", verifyToken, async (req, res) => {
     const hasLocation = !isNaN(userLat) && !isNaN(userLng);
 
     const buildNewsQuery = (isFallback = false) => {
+      console.log("Building news query for user:", userId, "isFallback:", isFallback);
       let params = [userId];
       let idx = 2;
 
