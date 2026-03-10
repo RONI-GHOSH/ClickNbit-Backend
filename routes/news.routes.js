@@ -1287,6 +1287,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       let whereClause = `n.news_id IS NOT NULL`;
 
       if (!isFallback) {
+        console.log("Applying view-based filtering for user:", userId);
         whereClause += ` AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
       }
 
