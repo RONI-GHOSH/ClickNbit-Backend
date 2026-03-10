@@ -290,7 +290,7 @@ router.delete("/:news_id", verifyAdmin, async (req, res) => {
 
 router.get("/details", async (req, res) => {
   try {
-    const { news_id, userId = null } = req.query;
+    const { news_id, userId = null, is_ad= false } = req.query;
 
     if (!news_id) {
       return res.status(400).json({
@@ -300,8 +300,7 @@ router.get("/details", async (req, res) => {
     }
 
     // ---- Cache key (user-aware) ----
-    const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"
-      }`;
+    const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"}:is_ad=${is_ad}`;
 
     // ---- Try cache (FAIL-OPEN) ----
     let cached = null;
@@ -317,6 +316,49 @@ router.get("/details", async (req, res) => {
         cached: true,
         data: cached.data,
         astonAd: cached.astonAd,
+      });
+    }
+
+    if (is_ad) {
+      const adQuery = `
+        SELECT
+          a.ad_id AS id,
+          a.title,
+          a.content_url,
+          a.redirect_url,
+          a.format_id,
+          a.is_active,
+          a.created_at,
+          a.updated_at
+        FROM advertisements a
+        WHERE a.ad_id = $1 AND a.is_active = true
+        LIMIT 1
+      `;
+
+      const result = await db.query(adQuery, [news_id]);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Advertisement not found",
+        });
+      }
+
+      const responsePayload = {
+        data: result.rows[0],
+        astonAd: null,
+      };
+
+      // ---- Cache for 5 minutes (300s) ----
+      try {
+        await setCache(cacheKey, responsePayload, 300);
+      } catch (e) {
+        console.warn("⚠️ Details cache set skipped:", e.message);
+      }
+
+      return res.status(200).json({
+        success: true,
+        ...responsePayload,
       });
     }
 
@@ -385,20 +427,19 @@ router.get("/details", async (req, res) => {
       });
     }
 
-    const astads = await db.query(
-      `SELECT 
-        a.ad_id AS id,
-        a.content_url,
-        a.redirect_url
-      FROM advertisements a
-      WHERE a.is_active = true AND a.format_id = 1
-      ORDER BY RANDOM()
-      LIMIT 1`
-    );
-
+    const newsData = result.rows[0];
     const responsePayload = {
-      data: result.rows[0],
-      astonAd: astads.rows[0] || null,
+      data: {
+        ...newsData,
+        aston_news_id: undefined,
+        bottom_ad_content_url: undefined,
+        bottom_ad_redirect_url: undefined,
+      },
+      astonAd: newsData.aston_news_id ? {
+        id: newsData.aston_news_id,
+        content_url: newsData.bottom_ad_content_url,
+        redirect_url: newsData.bottom_ad_redirect_url,
+      } : null,
     };
 
     // ---- Cache for 5 minutes (300s) ----
@@ -1776,6 +1817,11 @@ router.get("/feed", verifyToken, async (req, res) => {
       let whereClause = isFiltered
         ? conditions.join(" AND ")
         : "n.is_active = true";
+      
+      if (!isFiltered) {
+        whereClause += ` AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
+      }
+
       let orderByClause = hasLocation && !isFiltered
         ? `ORDER BY 
       (n.priority_score * 0.6 + 
@@ -1847,12 +1893,12 @@ router.get("/feed", verifyToken, async (req, res) => {
       return { sql, params: queryParams };
     };
 
-    let queryData = await buildNewsQuery(true);
+    let queryData = await buildNewsQuery(false);
     let newsRes = await db.query(queryData.sql, queryData.params);
 
     if (!newsRes.rows.length) {
       console.log("No filtered news found, fetching fallback news...");
-      queryData = await buildNewsQuery(false);
+      queryData = await buildNewsQuery(true);
       newsRes = await db.query(queryData.sql, queryData.params);
     }
 
