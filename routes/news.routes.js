@@ -1815,9 +1815,11 @@ router.get("/feed", verifyToken, async (req, res) => {
     }
     const buildNewsQuery = async (isFiltered = false) => {
       console.log("Building news query with isFiltered =", isFiltered);
-      let whereClause = isFiltered
-        ? conditions.join(" AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)")
-        : "n.is_active = true";
+      let whereClause = conditions.join(" AND ");
+      
+      if (isFiltered) {
+        whereClause += ` AND n.news_id NOT IN (SELECT news_id FROM views WHERE user_id = $1 AND is_ad = false)`;
+      }
 
       console.log(whereClause);
       
