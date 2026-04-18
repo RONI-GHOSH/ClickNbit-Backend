@@ -1959,10 +1959,12 @@ router.get("/feed", verifyToken, async (req, res) => {
           1 / (1 + (ST_DistanceSphere(geo_point::geometry, ST_SetSRID(ST_MakePoint(${userLng}, ${userLat}), 4326)) / 8000))
          ELSE 0 END * 10) DESC,
          a.updated_at DESC
+        LIMIT 100
       `;
     } else {
       adQuery += `
         ORDER BY priority_score DESC, -LOG(RANDOM()) / priority_score DESC
+        LIMIT 100
       `;
     }
 
