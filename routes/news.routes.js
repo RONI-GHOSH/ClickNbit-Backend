@@ -301,6 +301,7 @@ router.get("/details", async (req, res) => {
 
     // Parse is_ad as boolean (query params are strings)
     const isAd = is_ad === true ? "true" : "false";
+    console.log(`Details request for news_id=${news_id}, userId=${userId}, is_ad=${isAd}`);
 
     // ---- Cache key (user-aware) ----
     const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"}:is_ad=${isAd}`;
@@ -322,6 +323,8 @@ router.get("/details", async (req, res) => {
     //   });
     // }
 
+    console.log(isAd);
+
     if (isAd) {
       const adQuery = `
         SELECT
@@ -339,7 +342,7 @@ router.get("/details", async (req, res) => {
       `;
 
       const result = await db.query(adQuery, [news_id]);
-
+      console.log(`Ad query result for ad_id=${news_id}:`, result.rows);
       if (result.rows.length === 0) {
         return res.status(404).json({
           success: false,
