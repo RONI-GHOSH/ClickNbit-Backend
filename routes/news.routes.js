@@ -300,7 +300,7 @@ router.get("/details", async (req, res) => {
     }
 
     // Parse is_ad as boolean (query params are strings)
-    const isAd = is_ad === "true" ? "true" : "false";
+    const isAd = is_ad === true ? "true" : "false";
 
     // ---- Cache key (user-aware) ----
     const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"}:is_ad=${isAd}`;
