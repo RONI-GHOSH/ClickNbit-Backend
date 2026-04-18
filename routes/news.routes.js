@@ -306,21 +306,21 @@ router.get("/details", async (req, res) => {
     const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"}:is_ad=${isAd}`;
 
     // ---- Try cache (FAIL-OPEN) ----
-    let cached = null;
-    try {
-      cached = await getCache(cacheKey);
-    } catch (e) {
-      console.warn("⚠️ Details cache skipped:", e.message);
-    }
+    // let cached = null;
+    // try {
+    //   cached = await getCache(cacheKey);
+    // } catch (e) {
+    //   console.warn("⚠️ Details cache skipped:", e.message);
+    // }
 
-    if (cached) {
-      return res.status(200).json({
-        success: true,
-        cached: true,
-        data: cached.data,
-        astonAd: cached.astonAd,
-      });
-    }
+    // if (cached) {
+    //   return res.status(200).json({
+    //     success: true,
+    //     cached: true,
+    //     data: cached.data,
+    //     astonAd: cached.astonAd,
+    //   });
+    // }
 
     if (isAd) {
       const adQuery = `
@@ -353,16 +353,16 @@ router.get("/details", async (req, res) => {
       };
 
       // ---- Cache for 5 minutes (300s) ----
-      try {
-        await setCache(cacheKey, responsePayload, 300);
-      } catch (e) {
-        console.warn("⚠️ Details cache set skipped:", e.message);
-      }
+      // try {
+      //   await setCache(cacheKey, responsePayload, 300);
+      // } catch (e) {
+      //   console.warn("⚠️ Details cache set skipped:", e.message);
+      // }
 
-      return res.status(200).json({
-        success: true,
-        ...responsePayload,
-      });
+      // return res.status(200).json({
+      //   success: true,
+      //   ...responsePayload,
+      // });
     }
 
     // ---- DB query ----
