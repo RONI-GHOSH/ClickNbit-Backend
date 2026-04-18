@@ -1975,6 +1975,8 @@ router.get("/feed", verifyToken, async (req, res) => {
     const adsRes = await db.query(adQuery, [userId]);
     const fetchedAds = adsRes.rows;
 
+    console.log(`Page ${page}: News items=${newsRes.rows.length}, Ads fetched=${fetchedAds.length}, adFreq=${adFreq}`);
+
     let finalNews = [];
     let adIndex = 0;
 
@@ -1982,6 +1984,7 @@ router.get("/feed", verifyToken, async (req, res) => {
       finalNews.push(newsItem);
       // Use the dynamic frequency and cycle through ads repeatedly
       if ((index + 1) % adFreq === 0 && fetchedAds.length > 0) {
+        console.log(`Page ${page}: Inserting ad at position ${index + 1}, adIndex=${adIndex}, cycling to ad=${adIndex % fetchedAds.length}`);
         finalNews.push(fetchedAds[adIndex % fetchedAds.length]);
         adIndex++;
       }
