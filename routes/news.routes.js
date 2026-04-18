@@ -305,7 +305,7 @@ router.get("/details", async (req, res) => {
 
     // ---- Cache key (user-aware) ----
 
-    ---- Try cache (FAIL-OPEN) ----
+    // ---- Try cache (FAIL-OPEN) ----
     let cached = null;
     try {
       cached = await getCache(cacheKey);
