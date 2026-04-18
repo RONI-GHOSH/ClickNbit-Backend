@@ -1978,9 +1978,9 @@ router.get("/feed", verifyToken, async (req, res) => {
 
     newsRes.rows.forEach((newsItem, index) => {
       finalNews.push(newsItem);
-      // Use the dynamic frequency
-      if ((index + 1) % adFreq === 0 && adIndex < fetchedAds.length) {
-        finalNews.push(fetchedAds[adIndex]);
+      // Use the dynamic frequency and cycle through ads repeatedly
+      if ((index + 1) % adFreq === 0 && fetchedAds.length > 0) {
+        finalNews.push(fetchedAds[adIndex % fetchedAds.length]);
         adIndex++;
       }
     });
