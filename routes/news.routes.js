@@ -328,18 +328,37 @@ router.get("/details", async (req, res) => {
         SELECT
           a.ad_id AS id,
           a.title,
+          a.description,
           a.content_url,
           a.redirect_url,
           a.format_id,
           a.is_active,
+          a.is_featured,
+          a.category,
+          a.is_ad,
+          a.type_id,
+          a.target_tags AS tags,
+          a.fullscreen,
           a.created_at,
-          a.updated_at
+          a.updated_at,
+          COALESCE(v.view_count, 0) AS view_count,
+          COALESCE(l.like_count, 0) AS like_count,
+          COALESCE(c.comment_count, 0) AS comment_count,
+          COALESCE(s.share_count, 0) AS share_count,
+          CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
+          CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
         FROM advertisements a
+        LEFT JOIN (SELECT ad_id, COUNT(*) AS view_count FROM views GROUP BY ad_id) v ON a.ad_id = v.ad_id
+        LEFT JOIN (SELECT ad_id, COUNT(*) AS like_count FROM news_likes GROUP BY ad_id) l ON a.ad_id = l.ad_id
+        LEFT JOIN (SELECT ad_id, COUNT(*) AS comment_count FROM comments GROUP BY ad_id) c ON a.ad_id = c.ad_id
+        LEFT JOIN (SELECT ad_id, COUNT(*) AS share_count FROM shares GROUP BY ad_id) s ON a.ad_id = s.ad_id
+        LEFT JOIN news_likes ul ON ul.ad_id = a.ad_id AND ul.user_id = $2
+        LEFT JOIN saves sv ON sv.id = a.ad_id AND sv.user_id = $2 AND sv.is_ad = true
         WHERE a.ad_id = $1 AND a.is_active = true
         LIMIT 1
       `;
 
-      const result = await db.query(adQuery, [news_id]);
+      const result = await db.query(adQuery, [news_id, userId]);
       if (result.rows.length > 0) {
         return res.status(200).json({
           success: true,
