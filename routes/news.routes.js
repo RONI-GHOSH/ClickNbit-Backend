@@ -1923,7 +1923,7 @@ router.get("/feed", verifyToken, async (req, res) => {
         CASE WHEN ul.like_id IS NOT NULL THEN true ELSE false END AS is_liked,
         CASE WHEN sv.id IS NOT NULL THEN true ELSE false END AS is_saved
       FROM advertisements a
-      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.ad_id
+      LEFT JOIN (SELECT news_id, COUNT(*) AS view_count FROM views GROUP BY news_id) v ON a.ad_id = v.news_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS like_count FROM news_likes GROUP BY news_id) l ON a.ad_id = l.ad_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS comment_count FROM comments GROUP BY news_id) c ON a.ad_id = c.ad_id
       LEFT JOIN (SELECT news_id, COUNT(*) AS share_count FROM shares GROUP BY news_id) s ON a.ad_id = s.ad_id
