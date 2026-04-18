@@ -323,7 +323,7 @@ router.get("/details", async (req, res) => {
     }
 
 
-    if (is_Ad) {
+    if (is_ad) {
       const adQuery = `
         SELECT
           a.ad_id AS id,
