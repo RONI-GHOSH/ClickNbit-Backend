@@ -304,26 +304,24 @@ router.get("/details", async (req, res) => {
     console.log(`Details request for news_id=${news_id}, userId=${userId}, is_ad=${isAd}`);
 
     // ---- Cache key (user-aware) ----
-    const cacheKey = `news:details:v1:news=${news_id}:user=${userId || "guest"}:is_ad=${isAd}`;
 
-    // ---- Try cache (FAIL-OPEN) ----
-    // let cached = null;
-    // try {
-    //   cached = await getCache(cacheKey);
-    // } catch (e) {
-    //   console.warn("⚠️ Details cache skipped:", e.message);
-    // }
+    ---- Try cache (FAIL-OPEN) ----
+    let cached = null;
+    try {
+      cached = await getCache(cacheKey);
+    } catch (e) {
+      console.warn("⚠️ Details cache skipped:", e.message);
+    }
 
-    // if (cached) {
-    //   return res.status(200).json({
-    //     success: true,
-    //     cached: true,
-    //     data: cached.data,
-    //     astonAd: cached.astonAd,
-    //   });
-    // }
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        cached: true,
+        data: cached.data,
+        astonAd: cached.astonAd,
+      });
+    }
 
-    console.log(isAd);
 
     if (isAd) {
       const adQuery = `
@@ -342,7 +340,14 @@ router.get("/details", async (req, res) => {
       `;
 
       const result = await db.query(adQuery, [news_id]);
-      console.log(`Ad query result for ad_id=${news_id}:`, result.rows);
+      if (result.rows.length > 0) {
+        res.status(200).json({
+          success: true,
+          data: result.rows[0],
+          astonAd: null,
+        });
+
+      }
       if (result.rows.length === 0) {
         return res.status(404).json({
           success: false,
@@ -356,16 +361,16 @@ router.get("/details", async (req, res) => {
       };
 
       // ---- Cache for 5 minutes (300s) ----
-      // try {
-      //   await setCache(cacheKey, responsePayload, 300);
-      // } catch (e) {
-      //   console.warn("⚠️ Details cache set skipped:", e.message);
-      // }
+      try {
+        await setCache(cacheKey, responsePayload, 300);
+      } catch (e) {
+        console.warn("⚠️ Details cache set skipped:", e.message);
+      }
 
-      // return res.status(200).json({
-      //   success: true,
-      //   ...responsePayload,
-      // });
+      return res.status(200).json({
+        success: true,
+        ...responsePayload,
+      });
     }
 
     // ---- DB query ----
