@@ -1798,6 +1798,28 @@ router.get("/feed", verifyToken, async (req, res) => {
     const userLng = parseFloat(lng);
     const hasLocation = !isNaN(userLat) && !isNaN(userLng);
 
+    const normalizeCategoryFilters = (value) => {
+      if (!value) return [];
+
+      const rawValues = Array.isArray(value) ? value : [value];
+
+      return rawValues
+        .flatMap((item) => String(item).split(","))
+        .map((item) => item.trim().toLowerCase())
+        .filter((item) => item && item !== "all");
+    };
+
+    const requestedType = String(type || "").trim().toLowerCase();
+    const parsedTypeId = /^\d+$/.test(requestedType)
+      ? parseInt(requestedType, 10)
+      : null;
+    const categoryFilters = normalizeCategoryFilters(category);
+
+    if (requestedType && requestedType !== "all" && parsedTypeId === null) {
+      categoryFilters.push(requestedType);
+    }
+
+    const uniqueCategoryFilters = [...new Set(categoryFilters)];
 
     // Helper to get aston ad frequency
     const getAstonAdFrequency = async () => {
@@ -1826,15 +1848,21 @@ router.get("/feed", verifyToken, async (req, res) => {
     let conditions = ["n.is_active = true"];
 
     // Exclude viewed news unless fallback
-    if (type !== "all") {
+    if (parsedTypeId !== null) {
       conditions.push(`n.type_id = $${paramIdx}`);
-      params.push(type);
+      params.push(parsedTypeId);
       paramIdx++;
     }
 
-    if (category) {
-      conditions.push(`(SELECT array_agg(LOWER(c)) FROM unnest(n.category) c) && $${paramIdx}`);
-      params.push(category);
+    if (uniqueCategoryFilters.length) {
+      conditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM unnest(n.category) c
+          WHERE LOWER(c) = ANY($${paramIdx}::text[])
+        )
+      `);
+      params.push(uniqueCategoryFilters);
       paramIdx++;
     }
 
