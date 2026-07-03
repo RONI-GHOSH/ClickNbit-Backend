@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../config/db");
 const jwt = require("jsonwebtoken");
+const { getAdsStats, getAdsCoverage } = require("./stats.routes");
 
 // Middleware to verify admin token
 const verifyAdmin = (req, res, next) => {
@@ -143,6 +144,10 @@ router.get("/", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+// Get advertisement by ID with detailed metrics
+router.get("/stats", getAdsStats);
+router.get("/coverage", getAdsCoverage);
 
 // Get advertisement by ID with detailed metrics
 router.get("/:id", async (req, res) => {

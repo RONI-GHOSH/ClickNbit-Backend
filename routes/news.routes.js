@@ -5,6 +5,7 @@ const db = require("../config/db");
 const pool = require("../config/db");
 const admin = require("../config/firebaseAdmin");
 const { getCache, setCache } = require("../cache/cache");
+const { getNewsStats, getNewsCoverage } = require("./stats.routes");
 
 // Valid metrics for sorting
 const VALID_METRICS = [
@@ -2171,6 +2172,9 @@ router.get("/", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+router.get("/stats", getNewsStats);
+router.get("/coverage", getNewsCoverage);
 
 router.get("/:id", async (req, res) => {
   try {

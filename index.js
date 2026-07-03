@@ -23,6 +23,7 @@ const autosaveRoutes = require('./routes/autosave.routes');
 const saveRoutes = require('./routes/save.routes');
 const cronRoutes = require('./routes/feed-cron');
 const settingsRoutes = require('./routes/settings.routes');
+const statsRoutes = require('./routes/stats.routes').router;
 // const internalFeedRoutes = require('./routes/feed-apis');
 
 const compression = require('compression');
@@ -108,6 +109,8 @@ app.use('/api/autosave', autosaveRoutes);
 app.use('/api/save', saveRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/stats', statsRoutes);
+app.use('/api/analytics', statsRoutes);
 // app.use('/api/internal-feed', internalFeedRoutes);
 // Root route
 app.get('/', (req, res) => {

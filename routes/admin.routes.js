@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
+const { getAllStats, getNewsStats, getAdsStats, getCombinedCoverage, getNewsCoverage, getAdsCoverage } = require('./stats.routes');
 
 // Middleware to verify admin token
 const verifyToken = (req, res, next) => {
@@ -129,5 +130,15 @@ router.get('/profile', verifyToken, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
+router.get('/stats', getAllStats);
+router.get('/stats/news', getNewsStats);
+router.get('/stats/ads', getAdsStats);
+router.get('/stats/coverage', getCombinedCoverage);
+router.get('/news-stats', getNewsStats);
+router.get('/ads-stats', getAdsStats);
+router.get('/coverage', getCombinedCoverage);
+router.get('/news-coverage', getNewsCoverage);
+router.get('/ads-coverage', getAdsCoverage);
 
 module.exports = router;
