@@ -54,15 +54,26 @@ async function uploadToCloudinary(buffer, mimetype, folder, filename) {
 
 async function uploadToR2(buffer, filename, mimetype, folder) {
   let defaultFolder = "others";
-  if (mimetype.startsWith("image/original/")) defaultFolder = "images";
-  else if (mimetype.startsWith("video/original/")) defaultFolder = "video";
+  if (mimetype.startsWith("image/")) defaultFolder = "images";
+  else if (mimetype.startsWith("video/")) defaultFolder = "video";
   else defaultFolder = "raw";
 
   const finalFolder = folder || defaultFolder;
 
-  const ext = path.extname(filename) || "";
+  const originalExt = path.extname(filename) || "";
+  let ext = originalExt;
+  
+  if (mimetype.startsWith("image/")) {
+    if (mimetype === "image/jpeg") ext = ".jpg";
+    else if (mimetype === "image/png") ext = ".png";
+    else if (mimetype === "image/webp") ext = ".webp";
+    else if (mimetype === "image/gif") ext = ".gif";
+  } else if (mimetype.startsWith("video/")) {
+    if (mimetype === "video/mp4") ext = ".mp4";
+    else if (mimetype === "video/webm") ext = ".webm";
+  }
   const cleanName = filename
-    .replace(ext, "")
+    .replace(originalExt, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/_+/g, "_")
