@@ -1936,7 +1936,9 @@ router.get("/feed", verifyToken, async (req, res) => {
           LIMIT $${limitIdx}
         )
         SELECT 
-          nb.news_id as id, nb.title, nb.short_description as description, nb.content_url, nb.redirect_url, 
+          nb.news_id as id, nb.title, nb.short_description as description, nb.content_url, 
+          nb.vertical_content_url, nb.square_content_url, nb.compressed_content_url,
+          nb.redirect_url, 
           nb.is_featured, nb.category, nb.is_breaking, nb.is_ad, nb.tags, nb.type_id, nb.updated_at, nb.fullscreen,
           nb.view_count, nb.like_count, nb.comment_count, nb.share_count, nb.is_liked, nb.is_saved,
           ab.ad_id as aston_news_id, ab.content_url as bottom_ad_content_url, ab.redirect_url as bottom_ad_redirect_url
@@ -1962,7 +1964,9 @@ router.get("/feed", verifyToken, async (req, res) => {
     // Main Ads (Format ID 2) Logic
     let adQuery = `
       SELECT 
-        a.ad_id as id, a.title, a.description, a.content_url, a.redirect_url, a.is_featured, 
+        a.ad_id as id, a.title, a.description, a.content_url,
+        null as vertical_content_url, null as square_content_url, null as compressed_content_url,
+        a.redirect_url, a.is_featured, 
         a.category, a.is_ad, a.type_id, a.target_tags as tags, a.updated_at, a.fullscreen,
         COALESCE(v.view_count, 0) AS view_count,
         COALESCE(l.like_count, 0) AS like_count,
@@ -2131,6 +2135,9 @@ router.get("/", async (req, res) => {
         n.title,
         n.short_description,
         n.content_url,
+        n.vertical_content_url,
+        n.square_content_url,
+        n.compressed_content_url,
         n.category,
         n.tags,
         n.is_featured,
@@ -2322,6 +2329,7 @@ router.get("/top/single-metric", async (req, res) => {
 
     let query = `
       SELECT n.news_id as id, n.title, n.short_description, n.content_url,
+      n.vertical_content_url, n.square_content_url, n.compressed_content_url,
       n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
     `;
 
@@ -2391,7 +2399,9 @@ router.get("/top/multi-metric", async (req, res) => {
     });
 
     let query = `
-      SELECT n.news_id as id, n.title, n.short_description, n.content_url, n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
+      SELECT n.news_id as id, n.title, n.short_description, n.content_url,
+      n.vertical_content_url, n.square_content_url, n.compressed_content_url,
+      n.category, n.tags, n.is_featured, n.is_breaking, n.created_at,
       (${scoreComponents.join(" + ")}) as weighted_score
       FROM news n
       ${joins.join("\n")}
