@@ -24,6 +24,8 @@ const saveRoutes = require('./routes/save.routes');
 const cronRoutes = require('./routes/feed-cron');
 const settingsRoutes = require('./routes/settings.routes');
 const statsRoutes = require('./routes/stats.routes').router;
+const analyticsRoutes = require('./routes/analytics.routes');
+const { activityTracker } = require('./middleware/activityTracker');
 // const internalFeedRoutes = require('./routes/feed-apis');
 
 const compression = require('compression');
@@ -92,6 +94,7 @@ app.use('/api/', limiter); // Apply rate limiting to API routes only
 app.use(morgan('dev')); // Logging
 app.use(express.json({ limit: '50mb' })); // Parse JSON bodies
 app.use(express.urlencoded({ limit: '50mb', extended: true })); // Parse URL-encoded bodies
+app.use(activityTracker); // Automatic, non-blocking user activity tracking
 
 // Routes
 app.use('/api/admin', adminRoutes);
@@ -110,7 +113,8 @@ app.use('/api/save', saveRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/stats', statsRoutes);
-app.use('/api/analytics', statsRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/admin/analytics', analyticsRoutes);
 // app.use('/api/internal-feed', internalFeedRoutes);
 // Root route
 app.get('/', (req, res) => {

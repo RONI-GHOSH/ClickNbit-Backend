@@ -33,10 +33,23 @@ async function seed() {
         email VARCHAR(255),
         name VARCHAR(255),
         profile_image_url TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
         console.log('✅ Users table created/verified');
+
+        // 3. Create Daily Activity Table
+        await client.query(`
+      CREATE TABLE IF NOT EXISTS user_daily_activity (
+        user_id INT NOT NULL,
+        activity_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        last_active_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, activity_date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_daily_activity_date ON user_daily_activity(activity_date);
+    `);
+        console.log('✅ User daily activity table created/verified');
 
         // 3. Create Default Admin
         const email = 'admin@digontom.com';

@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const twilio = require("twilio");
 const { token } = require("morgan");
 const admin = require("../config/firebaseAdmin");
+const { recordUserActivity } = require("../middleware/activityTracker");
 const app = express();
 
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -74,6 +75,9 @@ app.post("/verify", async (req, res) => {
         { expiresIn: "7d" }
       );
 
+      // Record activity on successful login (non-blocking)
+      recordUserActivity(uid);
+
       return res.json({
         message: "OTP verified successfully",
         token,
@@ -139,6 +143,9 @@ app.post("/firebase", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
+
+    // Record activity on successful login (non-blocking)
+    recordUserActivity(userId);
 
     return res.json({
       message: "User authenticated successfully",
